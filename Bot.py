@@ -10,41 +10,55 @@ import json
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from collections import defaultdict
+import logging
+
+# ========== НАСТРОЙКА ЛОГИРОВАНИЯ (ВАЖНО ДЛЯ RENDER) ==========
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 # ========== ОБРАБОТКА СИГНАЛОВ ==========
 def signal_handler(sig, frame):
-    print("\n🛑 Получен сигнал завершения. Сохраняем данные...")
+    logger.info("🛑 Получен сигнал завершения. Сохраняем данные...")
     save_data()
-    print("✅ Данные сохранены. Завершаем работу.")
+    logger.info("✅ Данные сохранены. Завершаем работу.")
     sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
-# ========== HTTP СЕРВЕР ДЛЯ RENDER ==========
+# ========== БЫСТРЫЙ HTTP СЕРВЕР ДЛЯ RENDER ==========
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        # Отправляем мгновенный ответ 200 OK
         self.send_response(200)
+        self.send_header('Content-Type', 'text/plain; charset=utf-8')
         self.end_headers()
-        self.wfile.write(b"Bot is running!")
+        self.wfile.write(b'Bot is running!')
     
+    # Подавляем лишние логи HTTP-сервера
     def log_message(self, format, *args):
         pass
 
 def run_http_server():
     try:
-        # Render использует порт из переменной окружения PORT
+        # Render всегда дает порт через переменную PORT
         port = int(os.environ.get("PORT", 10000))
         server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-        print(f"✅ HTTP сервер запущен на порту {port} для Render")
+        # Уменьшаем таймаут, чтобы сервер быстрее обрабатывал запросы
+        server.timeout = 1
+        logger.info(f"✅ HTTP сервер для Render запущен на порту {port}")
         server.serve_forever()
     except Exception as e:
-        print(f"⚠️ Ошибка HTTP сервера: {e}")
+        logger.error(f"⚠️ Ошибка HTTP сервера: {e}")
 
-# Запускаем HTTP сервер в отдельном потоке
+# Запускаем HTTP сервер в отдельном потоке (daemon=True значит,
+# что он автоматически завершится при остановке главного потока)
 http_thread = threading.Thread(target=run_http_server, daemon=True)
 http_thread.start()
-
+logger.info("✅ HTTP сервер запущен в фоновом потоке")
 # ========== НАСТРОЙКИ ==========
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
