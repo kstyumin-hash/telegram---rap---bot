@@ -1,0 +1,63 @@
+{
+  "users_db": {
+    "5604869107": {
+      "id": 5604869107,
+      "username": "prostokiril",
+      "name": "/:_¯Кирилл_¯:/",
+      "balance": 0,         
+       "rappers": [
+        "cowboy",
+        "smoke",
+        "liltrap",
+        "cloudy",
+        "sadboy",
+        "ghost",
+        "money",
+        "ice",
+        "fire",
+        "diamond"
+      ],
+      "level": 100,
+      "xp": 999999,
+      "rank": "Новичок",
+      "admin": False,
+      "admin_index": 0,
+      "join_date": "13.02.2026",
+      "messages": [],
+      "items": [
+        "mic",
+        "chain",
+        "car",
+        "house",
+        "jet"
+      ],
+      "wins": 50,
+      "losses": 0,
+      "gang": "",
+      "stocks": {
+        "bitcoin": 0,
+        "ethereum": 0,
+        "dogecoin": 0
+      },
+      "daily_streak": 0
+    }
+  },
+  "messages_db": {},
+  "daily_bonus_db": {},
+  "chat_warnings": {},
+  "last_message_time": {},
+  "muted_users": {},
+  "banned_users": {},
+  "lottery_jackpot": 10000,
+  "gangs_db": {},
+  "rap_battles": [],
+  "user_stocks": {},
+  "admin_notifications": [
+    {
+      "text": "🎯 @prostokiril установил баланс 999,999 монет @prostokiril",
+      "time": "13.02.2026 15:19:23"
+    }
+  ],
+  "additional_admins": [],
+  "save_time": "13.02.2026 15:19:53"
+}
