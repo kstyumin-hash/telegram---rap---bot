@@ -559,6 +559,183 @@ def handle_remove_admin(chat_id, user_data, params):
     else:
         send_message(chat_id, f"❌ Пользователь @{username} не найден!")
 
+# ========== СБРОС ИГРОКА (ТОЛЬКО ДЛЯ ВЛАДЕЛЬЦЕВ) ==========
+def handle_reset_player(chat_id, user_data, params):
+    """Сброс игрока (только для владельцев)"""
+    if user_data.get("admin_index", -1) not in [0, 1]:
+        send_message(chat_id, "❌ Только владельцы могут сбрасывать игроков!")
+        return
+    
+    parts = params.strip().split()
+    if len(parts) < 1:
+        send_message(chat_id, "❌ Использование: /reset @username")
+        return
+    
+    username = parts[0].lstrip('@')
+    
+    # Запрещаем сбрасывать админов
+    if username.lower() in [a.lower() for a in ADMINS] or username.lower() in [a.lower() for a in ADDITIONAL_ADMINS]:
+        send_message(chat_id, "❌ Нельзя сбросить админа!")
+        return
+    
+    target = find_user_by_username_or_get_from_telegram(username)
+    if not target:
+        send_message(chat_id, f"❌ Пользователь @{username} не найден!")
+        return
+    
+    # Сохраняем ID и username перед сбросом
+    target_id = target["id"]
+    target_username = target.get("username", username)
+    target_name = target.get("name", "Игрок")
+    
+    # Полный сброс до стандартных значений новичка
+    target["balance"] = 5000
+    target["rappers"] = []
+    target["level"] = 1
+    target["xp"] = 0
+    target["rank"] = "👤 НОВИЧОК"
+    target["purchased_rank"] = None
+    target["stars_spent"] = 0
+    target["admin"] = False
+    target["admin_index"] = -1
+    target["items"] = []
+    target["wins"] = 0
+    target["losses"] = 0
+    target["gang"] = None
+    target["stocks"] = {}
+    target["daily_streak"] = 0
+    target["messages"] = []
+    
+    # Удаляем из мутов и банов если были
+    if target_id in muted_users:
+        del muted_users[target_id]
+    if target_id in banned_users:
+        del banned_users[target_id]
+    if target_id in chat_warnings:
+        del chat_warnings[target_id]
+    if target_id in last_message_time:
+        del last_message_time[target_id]
+    
+    # Удаляем из банды если был
+    for gang_id, gang in GANGS.items():
+        if target_id in gang["members"]:
+            gang["members"].remove(target_id)
+    
+    notification = f"🔄 @{user_data['username']} сбросил игрока @{target_username}"
+    add_admin_notification(notification)
+    
+    try:
+        send_message(target_id,
+            f"🔄 <b>ТВОЙ ПРОГРЕСС СБРОШЕН</b>\n\n"
+            f"Админ сбросил твой аккаунт до начальных значений.\n"
+            f"💰 Баланс: 5,000 монет\n"
+            f"🎤 Рэперы: 0\n"
+            f"⭐ Уровень: 1\n\n"
+            f"Напиши /start чтобы начать заново!"
+        )
+    except:
+        pass
+    
+    send_message(chat_id, f"✅ Игрок @{target_username} полностью сброшен!")
+
+# ========== РЕЖИМ ИИ (АЙ) ==========
+def handle_ai_mode(chat_id, user_data, params):
+    """Режим ИИ - помощь игрокам"""
+    if not params:
+        text = "🤖 <b>РЕЖИМ ИИ-ПОМОЩНИКА</b>\n\n"
+        text += "Задай мне вопрос о боте, и я помогу!\n\n"
+        text += "<b>Примеры вопросов:</b>\n"
+        text += "• Как заработать монеты?\n"
+        text += "• Что такое ранги?\n"
+        text += "• Как купить рэпера?\n"
+        text += "• Объясни дуэли\n"
+        text += "• Какие есть игры?\n\n"
+        text += "Использование: /ai твой вопрос"
+        send_message(chat_id, text)
+        return
+    
+    question = params.lower()
+    answer = ""
+    
+    # База знаний о боте
+    if any(word in question for word in ["заработ", "деньг", "монет", "баланс", "как получить"]):
+        answer = "💰 <b>Как заработать монеты:</b>\n\n"
+        answer += "• 🎤 Покупай рэперов в /shop - они приносят пассивный доход\n"
+        answer += "• 🎮 Играй в игры: /games (кости, слоты, лотерея)\n"
+        answer += "• ⚫ Занимайся нелегальным бизнесом (до 50к за раз)\n"
+        answer += "• ⚔️ Участвуй в дуэлях: /duel @user ставка\n"
+        answer += "• 💰 Собирай доход: /collect\n"
+        answer += "• 📈 Торгуй криптовалютой"
+    
+    elif any(word in question for word in ["ранг", "звезд", "бонус", "статус"]):
+        answer = "⭐ <b>Ранги за звезды Telegram:</b>\n\n"
+        answer += "Покупай ранги за настоящие звезды у @prostokiril\n\n"
+        answer += "🥉 Бронзовый (10 ⭐): +10% доход\n"
+        answer += "🥈 Серебряный (25 ⭐): +25% доход, +удача\n"
+        answer += "🥇 Золотой (50 ⭐): +50% доход, VIP\n"
+        answer += "💎 Платиновый (100 ⭐): +100% доход\n"
+        answer += "👑 Легендарный (200 ⭐): +200% доход\n\n"
+        answer += "Напиши /ranks для покупки"
+    
+    elif any(word in question for word in ["рэпер", "купит", "магазин", "шоп"]):
+        answer = "🎤 <b>Магазин рэперов:</b>\n\n"
+        answer += "В /shop ты можешь купить рэперов:\n\n"
+        for rid, r in list(RAPPERS.items())[:5]:
+            answer += f"• {r['name']} - {r['price']} монет (доход {r['income']}/ч)\n"
+        answer += "\nРэперы приносят пассивный доход каждый час!"
+    
+    elif any(word in question for word in ["дуэл", "битв", "сраж", "против"]):
+        answer = "⚔️ <b>Дуэли:</b>\n\n"
+        answer += "Сражайся с другими игроками!\n"
+        answer += "• /duel @user ставка - вызвать на дуэль\n"
+        answer += "• Победа зависит от уровня и количества рэперов\n"
+        answer += "• Ранги увеличивают силу в дуэлях\n"
+        answer += "• Комиссия 10% с каждой дуэли"
+    
+    elif any(word in question for word in ["игр", "кости", "слот", "лотере", "казино"]):
+        answer = "🎮 <b>Игры в боте:</b>\n\n"
+        answer += "• 🎲 Кости - угадай 7 или 11 (x2)\n"
+        answer += "• 🎰 Слоты - собери комбинацию (до x20)\n"
+        answer += "• 🪙 Орёл/Решка - угадай сторону (x2)\n"
+        answer += "• 🪨 Камень/Ножницы/Бумага (x2)\n"
+        answer += "• 🃏 21 Очко - блэкджек (x2)\n"
+        answer += "• 🎰 Лотерея - джекпот до миллиона!\n\n"
+        answer += "Напиши /games чтобы поиграть"
+    
+    elif any(word in question for word in ["банда", "ганг", "группировк"]):
+        answer = "⚫ <b>Гангстерские группировки:</b>\n\n"
+        answer += "Вступи в банду для бонуса:\n"
+        answer += "• 🔴 Bloods - +20% доход\n"
+        answer += "• 🔵 Crips - +15% доход\n"
+        answer += "• ⚫ Mafia - +25% доход\n"
+        answer += "• 🗡️ Yakuza - +30% доход\n\n"
+        answer += "Напиши /gangs чтобы вступить"
+    
+    elif any(word in question for word in ["крипт", "биткоин", "доги"]):
+        answer = "₿ <b>Криптовалюта:</b>\n\n"
+        answer += "Торгуй криптой - цены меняются каждые 5 мин!\n"
+        answer += "Купи дешево, продай дорого!\n\n"
+        answer += "Напиши /crypto чтобы начать"
+    
+    elif any(word in question for word in ["админ", "владел", "помощь", "вопрос"]):
+        answer = "👑 <b>Администрация:</b>\n\n"
+        answer += "Главный админ: @prostokiril\n"
+        answer += "Со-владелец: @ll1_what\n"
+        answer += "Канал: @Prostokirilllll\n\n"
+        answer += "По всем вопросам пиши /ask"
+    
+    else:
+        answer = "🤖 Я не совсем понял вопрос. Попробуй спросить:\n\n"
+        answer += "• Как заработать?\n"
+        answer += "• Что такое ранги?\n"
+        answer += "• Как купить рэпера?\n"
+        answer += "• Объясни дуэли\n"
+        answer += "• Какие есть игры?\n"
+        answer += "• Что такое банды?\n"
+        answer += "• Как связаться с админом?"
+    
+    send_message(chat_id, answer)
+
 # ========== АДМИН-КОМАНДЫ ==========
 def handle_admin_command(user_data, chat_id, command, params):
     """Обработка админ-команд"""
@@ -1332,10 +1509,11 @@ def handle_buy_rank(chat_id, user_data, rank_id):
     
     send_message(chat_id, text, buttons)
 
+# ========== ИСПРАВЛЕНИЕ БАГА С ПОКУПКОЙ РАНГА ==========
 def handle_confirm_rank(chat_id, user_data, rank_id):
-    """Подтверждение покупки ранга"""
+    """Подтверждение покупки ранга (ИСПРАВЛЕНО)"""
     if rank_id not in RANKS:
-        send_message(chat_id, "❌ Ранг не найден!")
+        send_message(chat_id, f"❌ Ранг {rank_id} не найден!")
         return
     
     # Отправляем уведомление админам
@@ -1351,12 +1529,17 @@ def handle_confirm_rank(chat_id, user_data, rank_id):
     ]
     
     # Отправляем всем админам
+    sent = False
     for admin_username in ADMINS:
         admin = find_user_by_username(admin_username)
         if admin:
             send_message(admin["id"], text, buttons)
+            sent = True
     
-    send_message(chat_id, "✅ Запрос отправлен админу! Ожидай подтверждения.")
+    if sent:
+        send_message(chat_id, "✅ Запрос отправлен админу! Ожидай подтверждения.")
+    else:
+        send_message(chat_id, "❌ Не удалось отправить запрос админам. Попробуй позже или напиши @prostokiril")
 
 def handle_approve_rank(chat_id, admin_data, rank_id, target_id):
     """Админ подтверждает покупку ранга"""
@@ -1983,13 +2166,13 @@ def handle_blackjack_start(chat_id, user_data, bet):
     buttons = [[{"text": "🃏 ЕЩЁ", "callback_data": f"bj_{bet}"}]]
     send_message(chat_id, text, buttons)
 
-# ЛОТЕРЕЯ
+# ========== ИСПРАВЛЕНИЕ БАГА С ЛОТЕРЕЕЙ ==========
 def handle_lottery(chat_id, user_data):
     """Лотерея"""
     global lottery_jackpot
     
     if user_data["balance"] < 100:
-        send_message(chat_id, "❌ Билет стоит 100 монет!")
+        send_message(chat_id, "❌ Билет стоит 100 монет!")  # Добавил цену
         return
     
     buttons = [
@@ -2006,11 +2189,11 @@ def handle_lottery(chat_id, user_data):
     )
 
 def handle_buy_lottery(chat_id, user_data):
-    """Покупка билета"""
+    """Покупка билета (ИСПРАВЛЕНО)"""
     global lottery_jackpot
     
     if user_data["balance"] < 100:
-        send_message(chat_id, "❌ Недостаточно монет!")
+        send_message(chat_id, "❌ Недостаточно монет! Билет стоит 100 монет.")
         return
     
     user_data["balance"] -= 100
@@ -2021,9 +2204,9 @@ def handle_buy_lottery(chat_id, user_data):
         win = lottery_jackpot
         user_data["balance"] += win
         lottery_jackpot = 10000
-        text = f"🎉 ДЖЕКПОТ! Ты выиграл {win} монет!"
+        text = f"🎉 <b>ДЖЕКПОТ!</b>\n\nТы выиграл {win:,} монет!"
     else:
-        text = f"🎫 Билет куплен! Джекпот: {lottery_jackpot}"
+        text = f"🎫 <b>Билет куплен!</b>\n\nДжекпот: {lottery_jackpot:,} монет"
     
     user_data["xp"] = user_data.get("xp", 0) + 25
     
@@ -2201,9 +2384,9 @@ def handle_start_battle(chat_id, player1, player2, bet_amount=0):
         f"{win_text}"
     )
 
-# ========== МОДЕРАЦИЯ ЧАТА ==========
+# ========== МОДЕРАЦИЯ ЧАТА (ИСПРАВЛЕНО) ==========
 def handle_chat_message(msg):
-    """Обработка сообщений в чате для модерации"""
+    """Обработка сообщений в чате для модерации (ИСПРАВЛЕНО)"""
     chat_id = msg["chat"]["id"]
     user_id = msg["from"]["id"]
     text = msg.get("text", "").lower()
@@ -2217,6 +2400,7 @@ def handle_chat_message(msg):
             pass
         return False
     
+    # Проверка на плохие слова
     for bad_word in BAD_WORDS:
         if bad_word in text:
             chat_warnings[user_id] += 1
@@ -2226,10 +2410,25 @@ def handle_chat_message(msg):
                 notification = f"🚫 @{username} получил мут на 5 мин за плохие слова"
                 add_admin_notification(notification)
                 send_message(chat_id, f"🚫 @{username} получил мут на 5 минут!")
+                # Удаляем сообщение с плохим словом
+                try:
+                    requests.post(f"https://api.telegram.org/bot{TOKEN}/deleteMessage",
+                                json={"chat_id": chat_id, "message_id": msg["message_id"]}, timeout=5)
+                except:
+                    pass
+                return False
             else:
                 send_message(chat_id, f"⚠️ @{username}, предупреждение {chat_warnings[user_id]}/3")
+                # Удаляем сообщение с плохим словом
+                try:
+                    requests.post(f"https://api.telegram.org/bot{TOKEN}/deleteMessage",
+                                json={"chat_id": chat_id, "message_id": msg["message_id"]}, timeout=5)
+                except:
+                    pass
+                return False
             break
     
+    # Проверка на спам
     current_time = time.time()
     last_time = last_message_time.get(user_id, 0)
     
@@ -2242,11 +2441,19 @@ def handle_chat_message(msg):
             notification = f"🚫 @{username} получил мут на 2 мин за спам"
             add_admin_notification(notification)
             send_message(chat_id, f"🚫 @{username} получил мут на 2 минуты!")
+            # Удаляем сообщение за спам
+            try:
+                requests.post(f"https://api.telegram.org/bot{TOKEN}/deleteMessage",
+                            json={"chat_id": chat_id, "message_id": msg["message_id"]}, timeout=5)
+            except:
+                pass
+            return False
     else:
         messages_db[user_id] = 1
     
     last_message_time[user_id] = current_time
     
+    # Проверка на мут
     if user_id in muted_users:
         if current_time < muted_users[user_id]:
             try:
@@ -2442,6 +2649,18 @@ def main():
                                     handle_duel_command(chat_id, user_data, text[6:])
                                 elif text == "/admin":
                                     handle_admin_panel(chat_id, user_data)
+                                # НОВЫЕ КОМАНДЫ
+                                elif text.startswith("/reset "):
+                                    if user_data.get("admin", False):
+                                        parts = text.split(" ", 1)
+                                        params = parts[1] if len(parts) > 1 else ""
+                                        handle_reset_player(chat_id, user_data, params)
+                                    else:
+                                        send_message(chat_id, "❌ Только для владельцев!")
+                                elif text.startswith("/ai"):
+                                    parts = text.split(" ", 1)
+                                    params = parts[1] if len(parts) > 1 else ""
+                                    handle_ai_mode(chat_id, user_data, params)
                                 elif user_data.get("admin", False):
                                     if text.startswith("/mute") or text.startswith("/unmute") or \
                                        text.startswith("/ban") or text.startswith("/unban") or \
