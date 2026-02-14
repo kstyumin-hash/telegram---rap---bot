@@ -59,6 +59,24 @@ def run_http_server():
 http_thread = threading.Thread(target=run_http_server, daemon=True)
 http_thread.start()
 logger.info("✅ HTTP сервер запущен в фоновом потоке")
+
+# ========== ФУНКЦИЯ АВТОСОХРАНЕНИЯ ==========
+def auto_save_loop():
+    """Автоматическое сохранение данных каждую минуту"""
+    logger.info("🔄 Поток автосохранения запущен (интервал: 60 секунд)")
+    while True:
+        time.sleep(60)  # Сохраняем каждую минуту
+        try:
+            save_data()
+            logger.debug(f"💾 Автосохранение выполнено в {time.strftime('%H:%M:%S')}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка при автосохранении: {e}")
+
+# Запускаем поток автосохранения
+auto_save_thread = threading.Thread(target=auto_save_loop, daemon=True)
+auto_save_thread.start()
+logger.info("✅ Поток автосохранения запущен")
+
 # ========== НАСТРОЙКИ ==========
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
@@ -92,7 +110,9 @@ print(f"👑 Второй админ: @{ADMINS[1]}")
 print(f"📢 Канал: @{CHANNEL_USERNAME}")
 print(f"🆔 ID канала: {CHANNEL_ID}")
 print(f"💾 Файл данных: {DATA_FILE}")
+print(f"⏱️ Автосохранение: каждые 60 секунд")
 print("=" * 60)
+
 # ========== БАЗЫ ДАННЫХ ==========
 users_db = {}
 messages_db = {}
@@ -110,7 +130,6 @@ user_stocks = defaultdict(dict)
 admin_notifications = []
 private_messages = defaultdict(list)
 active_games = {}
-
 # ========== РАНГИ ЗА ЗВЕЗДЫ TELEGRAM ==========
 RANKS = {
     "bronze": {
@@ -2570,17 +2589,12 @@ def main():
     print("✅ Данные загружены!")
     print("🤖 Бот запущен!")
     
-    last_save = time.time()
+    # Переменные для периодических обновлений
     last_crypto = time.time()
     offset = 0
     
     while True:
         try:
-            # Автосохранение каждые 5 минут
-            if time.time() - last_save > 300:
-                save_data()
-                last_save = time.time()
-            
             # Обновление криптовалюты каждые 5 минут
             if time.time() - last_crypto > 300:
                 update_crypto_prices()
