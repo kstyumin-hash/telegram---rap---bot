@@ -1,25 +1,47 @@
 import os
 import sys
 import signal
-import requests
 import time
-import random
-import datetime
-import re
-import json
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from collections import defaultdict
 import logging
+import json
+import requests
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
-# ========== НАСТРОЙКА ЛОГИРОВАНИЯ (ВАЖНО ДЛЯ RENDER) ==========
+# ================= ЛОГИРОВАНИЕ =================
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ========== ОБРАБОТКА СИГНАЛОВ ==========
+# ================= ФАЙЛ ДАННЫХ =================
+DATA_FILE = "bot_data.json"
+bot_data = {}  # Вся информация бота хранится здесь
+
+def load_data():
+    global bot_data
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                bot_data = json.load(f)
+            logger.info("💾 Данные загружены из bot_data.json")
+        except Exception as e:
+            logger.error(f"❌ Ошибка при загрузке данных: {e}")
+            bot_data = {}
+    else:
+        bot_data = {}
+        logger.info("⚠️ Файл bot_data.json не найден, создаём новый")
+
+def save_data():
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(bot_data, f, ensure_ascii=False, indent=4)
+        logger.info("💾 Данные успешно сохранены в bot_data.json")
+    except Exception as e:
+        logger.error(f"❌ Ошибка при сохранении данных: {e}")
+
+# ================= ОБРАБОТКА СИГНАЛОВ =================
 def signal_handler(sig, frame):
     logger.info("🛑 Получен сигнал завершения. Сохраняем данные...")
     save_data()
@@ -29,61 +51,88 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
-# ========== БЫСТРЫЙ HTTP СЕРВЕР ДЛЯ RENDER ==========
+# ================= HTTP СЕРВЕР ДЛЯ RENDER =================
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        # Отправляем мгновенный ответ 200 OK
         self.send_response(200)
         self.send_header('Content-Type', 'text/plain; charset=utf-8')
         self.end_headers()
         self.wfile.write(b'Bot is running!')
-    
-    # Подавляем лишние логи HTTP-сервера
+
     def log_message(self, format, *args):
-        pass
+        return  # Подавляем логи
 
 def run_http_server():
-    try:
-        # Render всегда дает порт через переменную PORT
-        port = int(os.environ.get("PORT", 10000))
-        server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-        # Уменьшаем таймаут, чтобы сервер быстрее обрабатывал запросы
-        server.timeout = 1
-        logger.info(f"✅ HTTP сервер для Render запущен на порту {port}")
-        server.serve_forever()
-    except Exception as e:
-        logger.error(f"⚠️ Ошибка HTTP сервера: {e}")
+    port = int(os.environ.get("PORT", 10000))
+    server = ThreadingHTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    logger.info(f"✅ HTTP сервер для Render запущен на порту {port}")
+    server.serve_forever()
 
-# Запускаем HTTP сервер в отдельном потоке (daemon=True значит,
-# что он автоматически завершится при остановке главного потока)
 http_thread = threading.Thread(target=run_http_server, daemon=True)
 http_thread.start()
 logger.info("✅ HTTP сервер запущен в фоновом потоке")
 
-# ========== ФУНКЦИЯ АВТОСОХРАНЕНИЯ ==========
+# ================= АВТОСОХРАНЕНИЕ =================
 def auto_save_loop():
-    """Автоматическое сохранение данных каждую минуту"""
     logger.info("🔄 Поток автосохранения запущен (интервал: 60 секунд)")
     while True:
-        time.sleep(60)  # Сохраняем каждую минуту
-        try:
-            save_data()
-            logger.debug(f"💾 Автосохранение выполнено в {time.strftime('%H:%M:%S')}")
-        except Exception as e:
-            logger.error(f"❌ Ошибка при автосохранении: {e}")
+        time.sleep(60)
+        save_data()
 
-# Запускаем поток автосохранения
 auto_save_thread = threading.Thread(target=auto_save_loop, daemon=True)
 auto_save_thread.start()
 logger.info("✅ Поток автосохранения запущен")
 
-# ========== НАСТРОЙКИ ==========
+# ================= НАСТРОЙКИ =================
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
-    print("❌ ОШИБКА: BOT_TOKEN не найден в переменных окружения!")
-    print("Добавьте BOT_TOKEN в переменные окружения Render")
-    # Временно используем токен из кода, но лучше добавить в переменные окружения
-    TOKEN = "8493334113:AAG0xhH5SEZ72APG4WrUjRrBAj1ilUWyZPo"
+    logger.error("❌ ОШИБКА: BOT_TOKEN не найден в переменных окружения!")
+    sys.exit(1)
+
+API_URL = f"https://api.telegram.org/bot{TOKEN}"
+
+# ================= ФУНКЦИИ ДЛЯ TELEGRAM =================
+def send_message(chat_id, text):
+    try:
+        requests.post(f"{API_URL}/sendMessage", data={"chat_id": chat_id, "text": text})
+    except Exception as e:
+        logger.error(f"❌ Ошибка при отправке сообщения: {e}")
+
+def get_updates(offset=None):
+    params = {"timeout": 100, "offset": offset}
+    try:
+        resp = requests.get(f"{API_URL}/getUpdates", params=params, timeout=120)
+        return resp.json()
+    except Exception as e:
+        logger.error(f"❌ Ошибка при получении апдейтов: {e}")
+        return {"result": []}
+
+# ================= ОСНОВНОЙ ЦИКЛ БОТА =================
+def run_bot():
+    load_data()  # Загружаем данные при старте
+    last_update_id = None
+    logger.info("🤖 Бот запущен и готов к работе")
+    while True:
+        updates = get_updates(offset=last_update_id)
+        for update in updates.get("result", []):
+            last_update_id = update["update_id"] + 1
+            message = update.get("message")
+            if message:
+                chat_id = message["chat"]["id"]
+                text = message.get("text", "")
+                logger.info(f"💬 Получено сообщение: {text}")
+
+                # Пример: сохраняем все сообщения пользователя
+                if str(chat_id) not in bot_data:
+                    bot_data[str(chat_id)] = []
+                bot_data[str(chat_id)].append(text)
+
+                # Простая эхо-ответ
+                send_message(chat_id, f"Вы написали: {text}")
+
+# ================= ЗАПУСК БОТА =================
+if __name__ == "__main__":
+    run_bot()
 
 CHANNEL_USERNAME = "Prostokirilllll"
 CHANNEL_ID = -1005604869107
