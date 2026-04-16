@@ -24,7 +24,7 @@ else:
     DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_data.json")
 
 # ================= НАСТРОЙКИ =================
-TOKEN = os.environ.get("8493334113:AAG0xhH5SEZ72APG4WrUjRrBAj1ilUWyZPo")
+TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     logger.error("❌ ОШИБКА: BOT_TOKEN не найден в переменных окружения!")
     sys.exit(1)
