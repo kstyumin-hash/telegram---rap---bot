@@ -29,7 +29,7 @@ if not TOKEN:
     logger.error("❌ ОШИБКА: BOT_TOKEN не найден в переменных окружения!")
     sys.exit(1)
 
-API_URL = f"https://api.telegram.org/bot{TOKEN}"
+API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 CHANNEL_USERNAME = "Prostokirilllll"
 CHANNEL_ID = -1005604869107
