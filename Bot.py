@@ -26,8 +26,8 @@ bot = telebot.TeleBot(BOT_TOKEN)
 OWNER_USERNAME = "prostokiril" 
 DEFAULT_ADMINS = ["prostokiril", "ll1_what"]
 
-# Чистый, безопасный и дружелюбный список нежелательных слов
-BAD_WORDS = ["дурак", "глупый", "плохой", "редиска", "какашка", "обидчик"]
+# Список нежелательных слов
+BAD_WORDS = ["еблан", "гандон", "пидор", "https//:", "t.me", "хуй"]
 
 # Путь к файлу базы данных
 if os.environ.get('RENDER'):
@@ -44,7 +44,7 @@ RANKS = {
     "legend": {"name": "👑 Легендарный", "stars": 200, "bonus": 3.0, "color": "🔴"}
 }
 
-# ========== ПЕРСОНАЖИ (ОБНОВЛЕННЫЕ И БОЛЕЕ СЛОЖНЫЕ) ==========
+# ========== ПЕРСОНАЖИ ==========
 RAPPERS = {
     "cowboy": {"name": "🤠 CowboyClicker", "price": 1000, "income": 5},
     "beatboxer": {"name": "🎤 BeatBoxer", "price": 5000, "income": 30},
@@ -54,6 +54,15 @@ RAPPERS = {
     "russiamafia": {"name": "🦾 russiamafiaextra", "price": 300000, "income": 2500},
     "semetary": {"name": "🪓 Semetary", "price": 600000, "income": 6000}
 }
+
+# База данных для новых неазартных игр
+CAPITALS = {
+    "Россия": "Москва", "Франция": "Париж", "Италия": "Рим", "Испания": "Мадрид",
+    "Германия": "Берлин", "Япония": "Токио", "Китай": "Пекин", "Великобритания": "Лондон",
+    "Египет": "Каир", "Канада": "Оттава", "Бразилия": "Бразилиа", "Казахстан": "Астана"
+}
+
+SCRAMBLE_WORDS = ["скрипт", "сервер", "кнопка", "модератор", "профиль", "баланс", "команда", "консоль"]
 
 # ================= СОХРАНЕНИЕ И ЗАГРУЗКА ДАННЫХ =================
 def load_data():
@@ -75,6 +84,10 @@ def load_data():
                     data["last_daily"] = {}
                 if "username_to_id" not in data:
                     data["username_to_id"] = {}
+                if "active_capitals" not in data:
+                    data["active_capitals"] = {}
+                if "active_scrambles" not in data:
+                    data["active_scrambles"] = {}
                 return data
         except Exception as e:
             logger.error(f"Ошибка при загрузке данных: {e}")
@@ -90,7 +103,9 @@ def load_data():
         "active_numbers": {},
         "duel_invites": {},
         "last_daily": {},
-        "username_to_id": {}
+        "username_to_id": {},
+        "active_capitals": {},
+        "active_scrambles": {}
     }
 
 def save_data(data):
@@ -115,16 +130,21 @@ def get_db_val(key, user_id, default):
     user_str = str(user_id)
     return db.get(key, {}).get(user_str, default)
 
-# Маппинг юзернеймов в ID для связи по юзернейму
 def save_user_by_username(username, user_id):
     if username:
         with db_lock:
             if "username_to_id" not in db:
                 db["username_to_id"] = {}
-            db["username_to_id"][username.lower().replace("@", "")] = str(user_id)
+            db["username_to_id"][username.lower().replace("@", "").strip()] = str(user_id)
             save_data(db)
 
-# Проверка, является ли пользователь админом
+# Поиск ID по логину или прямому ID
+def resolve_user_id(input_str):
+    clean = input_str.replace("@", "").lower().strip()
+    if clean.isdigit():
+        return clean
+    return db.get("username_to_id", {}).get(clean)
+
 def is_user_admin(chat_id, user_id, username=None):
     if username and username.lower() == OWNER_USERNAME.lower():
         return True
@@ -136,7 +156,6 @@ def is_user_admin(chat_id, user_id, username=None):
     except Exception:
         return False
 
-# Синяя кнопка "Меню" (Полный список доступных команд для обычных людей)
 def set_bot_commands():
     try:
         commands = [
@@ -148,6 +167,8 @@ def set_bot_commands():
             types.BotCommand("chests", "🎁 Открыть музыкальные кейсы"),
             types.BotCommand("word", "🧩 Собрать слово"),
             types.BotCommand("quiz", "🧮 Викторина (математика)"),
+            types.BotCommand("capitals", "🌍 Столицы стран"),
+            types.BotCommand("scramble", "🔤 Собрать слово из букв"),
             types.BotCommand("guess", "🎮 Угадать число"),
             types.BotCommand("coin", "🪙 Виртуальная монетка"),
             types.BotCommand("rhythm", "🥁 Ритм-игра на реакцию"),
@@ -161,22 +182,20 @@ def set_bot_commands():
     except Exception as e:
         logger.error(f"Не удалось установить команды: {e}")
 
-# ================= КОМАНДА /save (ТОЛЬКО ДЛЯ СОЗДАТЕЛЯ) =================
+# ================= КОМАНДЫ СОЗДАТЕЛЯ И АДМИНОВ =================
 @bot.message_handler(commands=['save'])
 def save_command_handler(message):
     username = message.from_user.username
     if not username or username.lower() != OWNER_USERNAME.lower():
         bot.reply_to(message, "❌ Эта команда доступна только Главному Создателю бота (@prostokiril).")
         return
-    
     try:
         with db_lock:
             save_data(db)
-        bot.reply_to(message, "💾 **База данных успешно принудительно сохранена в bot_data.json!**")
+        bot.reply_to(message, "💾 **База данных успешно принудительно сохранена!**", parse_mode="Markdown")
     except Exception as e:
         bot.reply_to(message, f"❌ Ошибка сохранения базы данных: {e}")
 
-# ================= КОМАНДА /reset [ID] (ДЛЯ АДМИНОВ) =================
 @bot.message_handler(commands=['reset'])
 def reset_command_handler(message):
     username = message.from_user.username
@@ -186,23 +205,21 @@ def reset_command_handler(message):
         
     args = message.text.split()
     if len(args) < 2:
-        bot.reply_to(message, "✏️ Использование: `/reset [ID пользователя]`\n\n_Пример: /reset 12345678_", parse_mode="Markdown")
+        bot.reply_to(message, "✏️ Использование: `/reset [ID или @username]`", parse_mode="Markdown")
         return
         
-    target_id = args[1]
+    target_id = resolve_user_id(args[1])
+    if not target_id:
+        bot.reply_to(message, "❌ Пользователь не найден в базе данных.")
+        return
     
     with db_lock:
-        if "balance" in db and target_id in db["balance"]:
-            db["balance"][target_id] = 0
-        if "rappers" in db and target_id in db["rappers"]:
-            db["rappers"][target_id] = []
-        if "ranks" in db and target_id in db["ranks"]:
-            db["ranks"][target_id] = "default"
-        if "warns" in db and target_id in db["warns"]:
-            db["warns"][target_id] = 0
+        for key in ["balance", "rappers", "ranks", "warns"]:
+            if key in db and str(target_id) in db[key]:
+                db[key][str(target_id)] = 0 if key in ["balance", "warns"] else ([] if key == "rappers" else "default")
         save_data(db)
         
-    bot.reply_to(message, f"🔄 Игровой аккаунт `{target_id}` был полностью сброшен администратором!", parse_mode="Markdown")
+    bot.reply_to(message, f"🔄 Игровой аккаунт пользователя с ID `{target_id}` был полностью сброшен!", parse_mode="Markdown")
 
 # ================= ФУНКЦИЯ: ОБЩЕНИЕ ПО ID И ЮЗЕРНЕЙМУ (/chat) =================
 @bot.message_handler(commands=['chat'])
@@ -213,9 +230,7 @@ def chat_command_handler(message):
             message,
             "✉️ **Личные сообщения по ID или Юзернейму!**\n\n"
             "Используйте формат:\n"
-            "`/chat [ID или @username] [Ваше сообщение]`\n\n"
-            "_Пример 1: /chat 1234567 Привет!_\n"
-            "_Пример 2: /chat @prostokiril Твой бот супер!_",
+            "`/chat [ID или @username] [Ваше сообщение]`",
             parse_mode="Markdown"
         )
         return
@@ -225,17 +240,10 @@ def chat_command_handler(message):
     sender_name = message.from_user.first_name
     sender_id = message.from_user.id
     
-    target_id = None
-    
-    # Определение: передан ID или Юзернейм
-    if target_input.startswith("@") or not target_input.isdigit():
-        clean_username = target_input.replace("@", "").lower()
-        target_id = db.get("username_to_id", {}).get(clean_username)
-        if not target_id:
-            bot.reply_to(message, f"❌ Не удалось найти пользователя `{target_input}` в базе данных бота. Он должен хотя бы раз запустить бота.", parse_mode="Markdown")
-            return
-    else:
-        target_id = target_input
+    target_id = resolve_user_id(target_input)
+    if not target_id:
+        bot.reply_to(message, f"❌ Не удалось найти пользователя `{target_input}` в базе. Он должен активировать бота.", parse_mode="Markdown")
+        return
     
     if str(target_id) == str(sender_id):
         bot.reply_to(message, "❌ Нельзя отправлять сообщения самому себе!")
@@ -254,8 +262,8 @@ def chat_command_handler(message):
             parse_mode="Markdown"
         )
         bot.reply_to(message, "✅ Сообщение успешно доставлено получателю!")
-    except Exception as e:
-        bot.reply_to(message, "❌ Не удалось отправить сообщение. Похоже, этот пользователь заблокировал бота.")
+    except Exception:
+        bot.reply_to(message, "❌ Не удалось отправить сообщение. Пользователь заблокировал бота.")
 
 # ================= МУЛЬТИПЛЕЕР (МУЗЫКАЛЬНЫЕ ДУЭЛИ) =================
 @bot.message_handler(commands=['duel'])
@@ -265,7 +273,7 @@ def duel_handler(message):
     args = message.text.split()
     
     if not message.reply_to_message:
-        bot.reply_to(message, "⚔️ **Музыкальный Батл!**\nЧтобы вызвать друга на дуэль, ответьте на его сообщение в чате командой:\n`/duel [ставка]`\n\n_Пример: /duel 200_", parse_mode="Markdown")
+        bot.reply_to(message, "⚔️ **Музыкальный Батл!**\nОтветьте на сообщение друга в чате командой:\n`/duel [ставка]`", parse_mode="Markdown")
         return
         
     target_id = str(message.reply_to_message.from_user.id)
@@ -313,8 +321,7 @@ def duel_handler(message):
         message.chat.id,
         f"⚔️ **Музыкальный фристайл-батл!**\n\n"
         f"🎙 **{user_name}** вызывает **{target_name}** на рэп-дуэль!\n"
-        f"💰 Ставка: **{bet} игровых очков**\n\n"
-        f"Покажи, на что ты способен!",
+        f"💰 Ставка: **{bet} игровых очков**",
         reply_markup=markup
     )
 
@@ -327,9 +334,9 @@ def chests_handler(message):
         types.InlineKeyboardButton("🥈 Серебряный Кейс Рэпера (1000 очков)", callback_data="chest_open_silver"),
         types.InlineKeyboardButton("🥇 Золотой Легендарный Кейс (5000 очков)", callback_data="chest_open_gold")
     )
-    bot.reply_to(message, "📦 **Выберите музыкальный кейс для открытия:**\nКаждый кейс содержит уникальные награды, баланс и редких персонажей!", reply_markup=markup)
+    bot.reply_to(message, "📦 **Выберите музыкальный кейс для открытия:**", reply_markup=markup)
 
-# ================= ИГРА: УГЛАДАЙ ЧИСЛО (/guess) =================
+# ================= ИГРА: УГАДАЙ ЧИСЛО (/guess) =================
 @bot.message_handler(commands=['guess'])
 def guess_handler(message):
     user_id = str(message.from_user.id)
@@ -342,17 +349,17 @@ def guess_handler(message):
                 db["active_numbers"] = {}
             db["active_numbers"][user_id] = secret_num
             save_data(db)
-        bot.reply_to(message, "🎮 **Я загадал число от 1 до 100!**\nПопробуй угадать его!\nПиши: `/guess [твоё число]`\n\nКаждая неверная попытка стоит **-20 очков**!\nЗа правильный ответ ты получишь **+300 очков**!", parse_mode="Markdown")
+        bot.reply_to(message, "🎮 **Я загадал число от 1 до 100!**\nПиши: `/guess [число]`\n\nКаждая ошибка: **-20 очков**!\nПобеда: **+300 очков**!", parse_mode="Markdown")
         return
         
     active_numbers = db.get("active_numbers", {})
     if user_id not in active_numbers:
-        bot.reply_to(message, "❌ У вас нет активной игры. Напишите `/guess`, чтобы загадать новое число!")
+        bot.reply_to(message, "❌ У вас нет активной игры. Напишите `/guess` без параметров.")
         return
         
     current_bal = get_db_val("balance", user_id, 0)
     if current_bal < 20:
-        bot.reply_to(message, "❌ У вас недостаточно очков для совершения попытки (нужно минимум 20)!")
+        bot.reply_to(message, "❌ Нужно минимум 20 очков для попытки!")
         return
 
     try:
@@ -362,18 +369,17 @@ def guess_handler(message):
         if user_num == secret:
             reward = 300
             update_db("balance", user_id, current_bal + reward)
-            
             with db_lock:
                 if "active_numbers" in db and user_id in db["active_numbers"]:
                     del db["active_numbers"][user_id]
                     save_data(db)
-            bot.reply_to(message, f"🎉 **ПОЗДРАВЛЯЕМ!** Вы угадали число `{secret}`! Награда **+{reward} очков** зачислена!")
+            bot.reply_to(message, f"🎉 **ПОЗДРАВЛЯЕМ!** Вы угадали число `{secret}`! Награда **+{reward} очков**!")
         elif user_num < secret:
             update_db("balance", user_id, current_bal - 20)
-            bot.reply_to(message, f"📈 Моё число **больше**, чем {user_num}!\nСписано **-20 очков** за неверную попытку. Попробуй еще раз!")
+            bot.reply_to(message, f"📈 Моё число **больше**, чем {user_num}!\nСписано **-20 очков**.")
         else:
             update_db("balance", user_id, current_bal - 20)
-            bot.reply_to(message, f"📉 Моё число **меньше**, чем {user_num}!\nСписано **-20 очков** за неверную попытку. Попробуй еще раз!")
+            bot.reply_to(message, f"📉 Моё число **меньше**, чем {user_num}!\nСписано **-20 очков**.")
     except ValueError:
         bot.reply_to(message, "❌ Пожалуйста, введите целое число.")
 
@@ -384,7 +390,7 @@ def coin_handler(message):
     args = message.text.split()
     
     if len(args) < 3:
-        bot.reply_to(message, "🪙 **Бросок виртуальной монетки!**\n\nИспользование:\n`/coin [орел/решка] [ставка]`\n\n_Пример: /coin орел 150_")
+        bot.reply_to(message, "🪙 **Виртуальная монетка!**\nФормат:\n`/coin [орел/решка] [ставка]`")
         return
         
     choice = args[1].lower().strip()
@@ -400,17 +406,17 @@ def coin_handler(message):
             
         current_bal = get_db_val("balance", user_id, 0)
         if current_bal < bet:
-            bot.reply_to(message, f"❌ Недостаточно очков для ставки! Ваш баланс: {current_bal}")
+            bot.reply_to(message, f"❌ Недостаточно баланса! Ваш баланс: {current_bal}")
             return
             
         flip_result = random.choice(["орел", "решка"])
         
         if choice == flip_result:
             update_db("balance", user_id, current_bal + bet)
-            bot.reply_to(message, f"🪙 Выпало: **{flip_result.upper()}**!\n\n🎉 Ура! Вы угадали и выиграли **+{bet} очков**! 💰")
+            bot.reply_to(message, f"🪙 Выпало: **{flip_result.upper()}**!\n\n🎉 Вы выиграли **+{bet} очков**!")
         else:
             update_db("balance", user_id, current_bal - bet)
-            bot.reply_to(message, f"🪙 Выпало: **{flip_result.upper()}**!\n\n😢 Увы, не повезло. Вы потеряли {bet} очков. Кликните `/click`, чтобы вернуть баланс!")
+            bot.reply_to(message, f"🪙 Выпало: **{flip_result.upper()}**!\n\n😢 Проигрыш. Списано {bet} очков.")
     except ValueError:
         bot.reply_to(message, "❌ Сумма ставки должна быть целым числом.")
 
@@ -424,12 +430,12 @@ def rhythm_handler(message):
     bot.reply_to(
         message, 
         "🥁 **Ритм-игра «Попади в бит»!**\n\n"
-        "Приготовь свои пальцы! Нажми на кнопку ниже в течение **1.5 секунд** после отправки этого сообщения, чтобы поймать идеальный такт!\n\n"
-        "_Внимание: если не успеешь, спишется -100 очков!_" ,
+        "Нажми на кнопку ниже в течение **1.5 секунд**, чтобы поймать бит!\n"
+        "_Внимание: опоздание стоит -100 очков!_" ,
         reply_markup=markup
     )
 
-# ================= ИГРА: УГЛАДАЙ СЛОВО (/word) =================
+# ================= ИГРА: УГАДАЙ СЛОВО (/word) =================
 @bot.message_handler(commands=['word'])
 def word_handler(message):
     user_id = str(message.from_user.id)
@@ -449,12 +455,12 @@ def word_handler(message):
             db["active_words"][user_id] = word
             save_data(db)
             
-        bot.reply_to(message, f"🧩 **Собери музыкальное слово из букв:**\n\n👉  `{scrambled_word}`  👈\n\nНапиши ответ командой: `/word [слово]`", parse_mode="Markdown")
+        bot.reply_to(message, f"🧩 **Собери слово из букв:**\n\n👉  `{scrambled_word}`  👈\n\nОтвет: `/word [слово]`", parse_mode="Markdown")
         return
         
     active_words = db.get("active_words", {})
     if user_id not in active_words:
-        bot.reply_to(message, "❌ У вас нет активной игры. Напишите `/word`, чтобы сгенерировать новое!")
+        bot.reply_to(message, "❌ Нет активной игры. Напишите `/word`.")
         return
         
     user_guess = args[1].lower().strip()
@@ -464,17 +470,91 @@ def word_handler(message):
         reward = 250
         current_bal = get_db_val("balance", user_id, 0)
         update_db("balance", user_id, current_bal + reward)
-        
         with db_lock:
             if "active_words" in db and user_id in db["active_words"]:
                 del db["active_words"][user_id]
                 save_data(db)
-                
-        bot.reply_to(message, f"🎉 Великолепно! Вы угадали слово **{correct_word.upper()}** и получили **+{reward} очков**! 💰")
+        bot.reply_to(message, f"🎉 Верно! Слово **{correct_word.upper()}**. Награда **+{reward} очков**!")
     else:
         current_bal = get_db_val("balance", user_id, 0)
         update_db("balance", user_id, max(0, current_bal - 50))
-        bot.reply_to(message, "❌ Неверно. Списано **-50 очков**. Попробуйте еще раз составить слово!")
+        bot.reply_to(message, "❌ Неверно. Списано **-50 очков**.")
+
+# ================= НОВЫЕ ИГРЫ: СТОЛИЦЫ И СЛОВА =================
+@bot.message_handler(commands=['capitals'])
+def capitals_handler(message):
+    user_id = str(message.from_user.id)
+    args = message.text.split(maxsplit=1)
+    
+    if len(args) < 2:
+        country = random.choice(list(CAPITALS.keys()))
+        with db_lock:
+            if "active_capitals" not in db:
+                db["active_capitals"] = {}
+            db["active_capitals"][user_id] = country
+            save_data(db)
+        bot.reply_to(message, f"🌍 **Географическая викторина!**\n\nНазовите столицу страны: **{country}**\n\nОтвет отправьте командой: `/capitals [город]`")
+        return
+        
+    active_capitals = db.get("active_capitals", {})
+    if user_id not in active_capitals:
+        bot.reply_to(message, "❌ У вас нет активного вопроса. Напишите `/capitals` без параметров.")
+        return
+        
+    user_ans = args[1].strip().lower()
+    country = active_capitals[user_id]
+    correct_ans = CAPITALS[country].lower()
+    
+    if user_ans == correct_ans:
+        reward = 200
+        current_bal = get_db_val("balance", user_id, 0)
+        update_db("balance", user_id, current_bal + reward)
+        with db_lock:
+            if "active_capitals" in db and user_id in db["active_capitals"]:
+                del db["active_capitals"][user_id]
+                save_data(db)
+        bot.reply_to(message, f"🎉 Правильно! Столица страны {country} — это **{CAPITALS[country]}**! Получено **+{reward} очков**!")
+    else:
+        bot.reply_to(message, "❌ Неверно! Попробуйте подумать ещё раз.")
+
+@bot.message_handler(commands=['scramble'])
+def scramble_handler(message):
+    user_id = str(message.from_user.id)
+    args = message.text.split()
+    
+    if len(args) < 2:
+        word = random.choice(SCRAMBLE_WORDS)
+        scrambled = list(word)
+        random.shuffle(scrambled)
+        scrambled_str = "".join(scrambled).upper()
+        
+        with db_lock:
+            if "active_scrambles" not in db:
+                db["active_scrambles"] = {}
+            db["active_scrambles"][user_id] = word
+            save_data(db)
+        bot.reply_to(message, f"🔤 **Собери IT-слово:**\n\n👉  `{scrambled_str}`  👈\n\nОтправь ответ: `/scramble [слово]`")
+        return
+        
+    active_scrambles = db.get("active_scrambles", {})
+    if user_id not in active_scrambles:
+        bot.reply_to(message, "❌ Нет активной игры. Начните заново: `/scramble`")
+        return
+        
+    user_guess = args[1].strip().lower()
+    correct = active_scrambles[user_id]
+    
+    if user_guess == correct:
+        reward = 150
+        current_bal = get_db_val("balance", user_id, 0)
+        update_db("balance", user_id, current_bal + reward)
+        with db_lock:
+            if "active_scrambles" in db and user_id in db["active_scrambles"]:
+                del db["active_scrambles"][user_id]
+                save_data(db)
+        bot.reply_to(message, f"🎉 Отлично! Ты угадал слово **{correct.upper()}**! Получено **+{reward} очков**!")
+    else:
+        bot.reply_to(message, "❌ Ошибка. Попробуй переставить буквы иначе!")
 
 # ================= ЕЖЕДНЕВНЫЙ БОНУС (/daily) =================
 @bot.message_handler(commands=['daily'])
@@ -487,7 +567,7 @@ def daily_handler(message):
         remaining_sec = int(86400 - (current_time - last_daily))
         hours = remaining_sec // 3600
         minutes = (remaining_sec % 3600) // 60
-        bot.reply_to(message, f"⏱ Вы уже забирали свой ежедневный бонус! Приходите снова через **{hours} ч. {minutes} мин.**")
+        bot.reply_to(message, f"⏱ Приходите снова через **{hours} ч. {minutes} мин.**")
         return
         
     reward = random.randint(500, 1000)
@@ -495,8 +575,7 @@ def daily_handler(message):
     
     update_db("balance", user_id, current_bal + reward)
     update_db("last_daily", user_id, current_time)
-    
-    bot.reply_to(message, f"🎁 **Ежедневная награда зачислена!**\n\nВы получили **+{reward} очков** на баланс! 🎉")
+    bot.reply_to(message, f"🎁 **Бонус получен!**\n\nВы получили **+{reward} очков**! 🎉")
 
 # ================= ВИКТОРИНА (/quiz) =================
 @bot.message_handler(commands=['quiz'])
@@ -514,13 +593,12 @@ def quiz_handler(message):
                 db["active_quizzes"] = {}
             db["active_quizzes"][user_id] = correct_ans
             save_data(db)
-            
-        bot.reply_to(message, f"🧮 **Реши пример:**\n\nСколько будет: **{num1} + {num2}**?\n\nОтправь ответ командой: `/quiz [ответ]`", parse_mode="Markdown")
+        bot.reply_to(message, f"🧮 **Реши пример:**\n\nСколько будет: **{num1} + {num2}**?\n\nОтвет: `/quiz [ответ]`", parse_mode="Markdown")
         return
         
     active_quizzes = db.get("active_quizzes", {})
     if user_id not in active_quizzes:
-        bot.reply_to(message, "❌ У вас нет активного примера. Напишите `/quiz` без аргументов, чтобы запустить!")
+        bot.reply_to(message, "❌ Нет активного примера. Напишите `/quiz`.")
         return
         
     try:
@@ -531,19 +609,17 @@ def quiz_handler(message):
             reward = 200
             current_bal = get_db_val("balance", user_id, 0)
             update_db("balance", user_id, current_bal + reward)
-            
             with db_lock:
                 if "active_quizzes" in db and user_id in db["active_quizzes"]:
                     del db["active_quizzes"][user_id]
                     save_data(db)
-                    
-            bot.reply_to(message, f"🎉 Абсолютно верно! Вы заработали **+{reward} очков**! 💰")
+            bot.reply_to(message, f"🎉 Верно! Вы заработали **+{reward} очков**!")
         else:
             current_bal = get_db_val("balance", user_id, 0)
             update_db("balance", user_id, max(0, current_bal - 150))
-            bot.reply_to(message, "❌ Неверный ответ. Списано **-150 очков**. Попробуйте посчитать заново!")
+            bot.reply_to(message, "❌ Неверный ответ. Списано **-150 очков**.")
     except ValueError:
-        bot.reply_to(message, "❌ Пожалуйста, укажите ответ в виде целого числа.")
+        bot.reply_to(message, "❌ Ответ должен быть целым числом.")
 
 # ================= КНОПКИ CALLBACK ОБРАБОТЧИКА =================
 @bot.callback_query_handler(func=lambda call: True)
@@ -559,7 +635,6 @@ def handle_callbacks(call):
             return
             
         prices = [types.LabeledPrice(label=RANKS[rank_id]["name"], amount=RANKS[rank_id]["stars"])]
-        
         try:
             bot.send_invoice(
                 call.message.chat.id, 
@@ -571,7 +646,7 @@ def handle_callbacks(call):
                 prices=prices,
                 start_parameter="buy-rank"
             )
-            bot.answer_callback_query(call.id, "💰 Счет на оплату сформирован!")
+            bot.answer_callback_query(call.id, "💰 Счет сформирован!")
         except Exception as e:
             bot.answer_callback_query(call.id, f"❌ Ошибка: {e}", show_alert=True)
         return
@@ -579,7 +654,6 @@ def handle_callbacks(call):
     # --- ОБРАБОТКА ДУЭЛЕЙ ---
     if call.data.startswith("duel_accept_") or call.data.startswith("duel_decline_"):
         target_id = call.data.split("_")[2]
-        
         if user_id != target_id:
             bot.answer_callback_query(call.id, "❌ Этот вызов брошен не вам!", show_alert=True)
             return
@@ -608,17 +682,18 @@ def handle_callbacks(call):
                     save_data(db)
                 try: bot.delete_message(call.message.chat.id, call.message.message_id)
                 except: pass
+                bot.answer_callback_query(call.id, "❌ Отменено.")
                 return
                 
             if targ_bal < bet:
-                bot.answer_callback_query(call.id, "❌ У вас больше нет нужного количества очков!", show_alert=True)
+                bot.answer_callback_query(call.id, "❌ У вас не хватает очков!", show_alert=True)
                 return
                 
             roll_challenger = random.randint(1, 100)
             roll_target = random.randint(1, 100)
             
             battle_text = (
-                f"🔥 **Музыкальный фристайл-батл начался!** 🔥\n\n"
+                f"🔥 **Музыкальный батл начался!** 🔥\n\n"
                 f"🎤 **{chall_name}** выдает взрывной битбокс...\n"
                 f"🎤 **{target_name}** зачитывает мощные рифмы...\n\n"
             )
@@ -626,16 +701,16 @@ def handle_callbacks(call):
             if roll_challenger > roll_target:
                 update_db("balance", chall_id, chall_bal + bet)
                 update_db("balance", target_id, targ_bal - bet)
-                battle_text += f"🏆 **Победил {chall_name}!** (+{bet} очков)\n😢 {target_name} уступает и теряет ставку."
+                battle_text += f"🏆 **Победил {chall_name}!** (+{bet} очков)\n😢 {target_name} уступает."
             elif roll_target > roll_challenger:
                 update_db("balance", chall_id, chall_bal - bet)
                 update_db("balance", target_id, targ_bal + bet)
-                battle_text += f"🏆 **Победил {target_name}!** (+{bet} очков)\n😢 {chall_name} уступает и теряет ставку."
+                battle_text += f"🏆 **Победил {target_name}!** (+{bet} очков)\n😢 {chall_name} уступает."
             else:
-                battle_text += f"🤝 **Ничья!** Оба рэпера выступили на равных. Очки остаются при вас!"
+                battle_text += f"🤝 **Ничья!** Очки остаются при вас!"
                 
             bot.send_message(call.message.chat.id, battle_text)
-            
+            bot.answer_callback_query(call.id, "✅ Батл сыгран!")
             with db_lock:
                 if target_id in db["duel_invites"]: del db["duel_invites"][target_id]
                 save_data(db)
@@ -643,7 +718,8 @@ def handle_callbacks(call):
             except: pass
             
         elif "decline" in call.data:
-            bot.send_message(call.message.chat.id, f"🛡 **{target_name}** отклонил вызов на батл.")
+            bot.send_message(call.message.chat.id, f"🛡 **{target_name}** отклонил вызов.")
+            bot.answer_callback_query(call.id, "❌ Отклонено.")
             with db_lock:
                 if target_id in db["duel_invites"]: del db["duel_invites"][target_id]
                 save_data(db)
@@ -658,7 +734,7 @@ def handle_callbacks(call):
         send_time = int(parts[3])
         
         if str(user_id) != str(creator_id):
-            bot.answer_callback_query(call.id, "❌ Это не ваша ритм-игра! Начните свою командой /rhythm", show_alert=True)
+            bot.answer_callback_query(call.id, "❌ Это не ваша ритм-игра!", show_alert=True)
             return
             
         time_diff = time.time() - send_time
@@ -669,7 +745,7 @@ def handle_callbacks(call):
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text=f"🥁 **ИДЕАЛЬНО!**\n\nВы попали точно в бит за *{time_diff:.2f} сек.*! Награда **+{reward} очков** зачислена на баланс! 🎸"
+                text=f"🥁 **ИДЕАЛЬНО!**\n\nВы попали точно в бит за *{time_diff:.2f} сек.*! Награда **+{reward} очков**!"
             )
         else:
             current_bal = get_db_val("balance", user_id, 0)
@@ -677,8 +753,9 @@ def handle_callbacks(call):
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text=f"😢 **Слишком медленно!**\n\nВы опоздали на бит (*{time_diff:.2f} сек.*).\nСписан штраф **-100 очков**. Попробуйте еще раз с помощью `/rhythm`!"
+                text=f"😢 **Слишком медленно!** (*{time_diff:.2f} сек.*).\nШтраф **-100 очков**."
             )
+        bot.answer_callback_query(call.id, "🥁 Бит обработан!")
         return
 
     # --- ОТКРЫТИЕ КЕЙСОВ ---
@@ -694,81 +771,82 @@ def handle_callbacks(call):
             cost, title = 5000, "🥇 Золотой Легендарный Кейс"
             
         if current_bal < cost:
-            bot.answer_callback_query(call.id, f"❌ Недостаточно очков для открытия! Нужно {cost}.", show_alert=True)
+            bot.answer_callback_query(call.id, f"❌ Недостаточно очков! Нужно {cost}.", show_alert=True)
             return
             
         update_db("balance", user_id, current_bal - cost)
         chance = random.randint(1, 100)
-        
         reward_msg = ""
+        
         if chest_type == "bronze":
             if chance <= 70:
                 reward = random.randint(30, 110)
                 update_db("balance", user_id, get_db_val("balance", user_id, 0) + reward)
-                reward_msg = f"📼 Вы нашли старую порванную кассету...\n💰 Сдали на запчасти за **{reward} очков**."
+                reward_msg = f"📼 Кассета сдана за **{reward} очков**."
             elif chance <= 92:
                 reward = random.randint(210, 310)
                 update_db("balance", user_id, get_db_val("balance", user_id, 0) + reward)
-                reward_msg = f"🎤 Вы нашли обычный проводной микрофон!\n💰 Продали за **{reward} очков**!"
+                reward_msg = f"🎤 Проводной микрофон продан за **{reward} очков**!"
             else:
                 owned = get_db_val("rappers", user_id, [])
                 if "cowboy" not in owned:
                     owned.append("cowboy")
                     update_db("rappers", user_id, owned)
-                    reward_msg = "🤠 Ого! Вы выбили персонажа **CowboyClicker** прямо из бронзового кейса! 🎉"
+                    reward_msg = "🤠 Персонаж **CowboyClicker** присоединился к вам! 🎉"
                 else:
                     reward = 500
                     update_db("balance", user_id, get_db_val("balance", user_id, 0) + reward)
-                    reward_msg = f"🤠 Выпал дубликат CowboyClicker! Начислена компенсация в размере **{reward} очков**!"
+                    reward_msg = f"🤠 Дубликат CowboyClicker! Начислено **{reward} очков**!"
                     
         elif chest_type == "silver":
             if chance <= 65:
                 reward = random.randint(150, 600)
                 update_db("balance", user_id, get_db_val("balance", user_id, 0) + reward)
-                reward_msg = f"🎸 Внутри лежал обычный мерч низкого качества...\n💰 Продали за: **{reward} очков**."
+                reward_msg = f"🎸 Обычный мерч продан за **{reward} очков**."
             elif chance <= 90:
                 reward = random.randint(1100, 1900)
                 update_db("balance", user_id, get_db_val("balance", user_id, 0) + reward)
-                reward_msg = f"🎛 Вы получили неплохой звуковой пульт!\n💰 Награда: **{reward} очков**!"
+                reward_msg = f"🎛 Пульт принес **{reward} очков**!"
             else:
                 owned = get_db_val("rappers", user_id, [])
                 rapper_get = random.choice(["cowboy", "beatboxer"])
                 if rapper_get not in owned:
                     owned.append(rapper_get)
                     update_db("rappers", user_id, owned)
-                    reward_msg = f"🎤 Ура! К вашей музыкальной банде присоединился персонаж **{RAPPERS[rapper_get]['name']}**! 🎉"
+                    reward_msg = f"🎤 К вам примкнул **{RAPPERS[rapper_get]['name']}**! 🎉"
                 else:
                     reward = 1500
                     update_db("balance", user_id, get_db_val("balance", user_id, 0) + reward)
-                    reward_msg = f"👥 Выпал дубликат! Вам начислена компенсация в размере **{reward} очков**!"
+                    reward_msg = f"👥 Компенсация за дубликат: **{reward} очков**!"
                     
         elif chest_type == "gold":
             if chance <= 60:
                 reward = random.randint(1000, 3500)
                 update_db("balance", user_id, get_db_val("balance", user_id, 0) + reward)
-                reward_msg = f"🎹 Вы нашли винтажный синтезатор, но он сломан...\n💰 Отремонтировали и продали за **{reward} очков**."
+                reward_msg = f"🎹 Старый синтезатор ушел за **{reward} очков**."
             elif chance <= 88:
                 reward = random.randint(6000, 11000)
                 update_db("balance", user_id, get_db_val("balance", user_id, 0) + reward)
-                reward_msg = f"💿 **УСПЕШНЫЙ СИНГЛ!** Ваш трек попал в радио-эфиры!\n💰 Награда: **{reward} очков**! 🔥"
+                reward_msg = f"💿 Ваш сингл на радио принес **{reward} очков**! 🔥"
             else:
                 owned = get_db_val("rappers", user_id, [])
                 rapper_get = random.choice(["dj_cloud", "electro", "ruha40", "russiamafia", "semetary"])
                 if rapper_get not in owned:
                     owned.append(rapper_get)
                     update_db("rappers", user_id, owned)
-                    reward_msg = f"⚡ **НЕВЕРОЯТНО!** Вы выиграли крутого персонажа **{RAPPERS[rapper_get]['name']}** совершенно бесплатно! 👑"
+                    reward_msg = f"⚡ Мега-выигрыш! Персонаж **{RAPPERS[rapper_get]['name']}** у вас! 👑"
                 else:
                     reward = 15000
                     update_db("balance", user_id, get_db_val("balance", user_id, 0) + reward)
-                    reward_msg = f"💎 **ДУБЛИКАТ ПЕРСОНАЖА!** Вам зачислен бонус в размере **{reward} очков**!"
+                    reward_msg = f"💎 Компенсация за дубликат: **{reward} очков**!"
                     
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text=f"📦 **Открытие: {title}**\n\n{reward_msg}\n\n💰 Твой новый баланс: *{get_db_val('balance', user_id, 0)} очков*.",
+            text=f"📦 **Открытие: {title}**\n\n{reward_msg}\n\n💰 Баланс: *{get_db_val('balance', user_id, 0)} очков*.",
             parse_mode="Markdown"
         )
+        bot.answer_callback_query(call.id, "📦 Кейс открыт!")
         return
 
     # --- КЛИЕНТ ЧАТ ОТВЕТА ---
@@ -776,6 +854,7 @@ def handle_callbacks(call):
         sender_id = call.data.split("_")[2]
         msg = bot.send_message(call.message.chat.id, f"✍️ Напишите ответное сообщение для пользователя `{sender_id}`:")
         bot.register_next_step_handler(msg, lambda m: process_quick_reply(m, sender_id))
+        bot.answer_callback_query(call.id)
         return
 
     # --- АДМИН КОЛБЭКИ ---
@@ -784,24 +863,26 @@ def handle_callbacks(call):
         return
 
     action = call.data
+    bot.answer_callback_query(call.id) # Моментальное гашение кнопки
+    
     if action == "adm_give_money":
-        msg = bot.send_message(call.message.chat.id, "Введите ID пользователя и сумму очков через пробел:\n`[ID] [Сумма]`")
+        msg = bot.send_message(call.message.chat.id, "Введите ID пользователя или @username и сумму очков через пробел:\n`[ID/Логин] [Сумма]`")
         bot.register_next_step_handler(msg, process_admin_money)
     elif action == "adm_give_rank":
-        msg = bot.send_message(call.message.chat.id, "Введите ID пользователя и ранг (bronze, silver, gold, platinum, legend):\n`[ID] [ранг]`")
+        msg = bot.send_message(call.message.chat.id, "Введите ID или @username и ранг (bronze, silver, gold, platinum, legend):\n`[ID/Логин] [ранг]`")
         bot.register_next_step_handler(msg, process_admin_rank)
     elif action == "adm_give_rapper":
-        msg = bot.send_message(call.message.chat.id, "Введите ID пользователя и код рэпера (cowboy, beatboxer, dj_cloud, electro, ruha40, russiamafia, semetary):\n`[ID] [рэпер]`")
+        msg = bot.send_message(call.message.chat.id, "Введите ID или @username и код рэпера через пробел:\n`[ID/Логин] [рэпер]`")
         bot.register_next_step_handler(msg, process_admin_rapper)
     elif action == "adm_add_admin":
         if not username or username.lower() != OWNER_USERNAME.lower():
-            bot.answer_callback_query(call.id, "❌ Только Владелец @prostokiril может делать это!", show_alert=True)
+            bot.send_message(call.message.chat.id, "❌ Только Владелец @prostokiril может делать это!")
             return
         msg = bot.send_message(call.message.chat.id, "Введите юзернейм нового администратора (без знака @):")
         bot.register_next_step_handler(msg, process_add_admin)
     elif action == "adm_remove_admin":
         if not username or username.lower() != OWNER_USERNAME.lower():
-            bot.answer_callback_query(call.id, "❌ Только Владелец @prostokiril может делать это!", show_alert=True)
+            bot.send_message(call.message.chat.id, "❌ Только Владелец @prostokiril может делать это!")
             return
         msg = bot.send_message(call.message.chat.id, "Введите юзернейм админа для удаления:")
         bot.register_next_step_handler(msg, process_remove_admin)
@@ -817,49 +898,75 @@ def process_quick_reply(message, target_id):
     try:
         bot.send_message(
             target_id,
-            f"✉️ **Входящий ответ на сообщение!**\n\n"
+            f"✉️ **Входящий ответ!**\n\n"
             f"👤 Отправитель: *{sender_name}* (ID: `{sender_id}`)\n"
             f"💬 Текст:\n«_{user_msg}_»",
             reply_markup=markup,
             parse_mode="Markdown"
         )
         bot.reply_to(message, "✅ Ваш ответ успешно доставлен!")
-    except Exception as e:
+    except Exception:
         bot.reply_to(message, "❌ Не удалось доставить ответ.")
 
-# ================= АДМИН ВВОД ДАННЫХ =================
+# ================= АДМИН ВВОД ДАННЫХ (ИСПРАВЛЕННЫЙ) =================
 def process_admin_money(message):
     try:
-        uid, amount = message.text.split()
+        parts = message.text.split()
+        if len(parts) < 2:
+            bot.reply_to(message, "❌ Неверный ввод.")
+            return
+        target_input, amount = parts[0], parts[1]
         amount = int(amount)
+        uid = resolve_user_id(target_input)
+        if not uid:
+            bot.reply_to(message, f"❌ Пользователь `{target_input}` не найден в БД бота.")
+            return
         current = get_db_val("balance", uid, 0)
         update_db("balance", uid, current + amount)
         bot.reply_to(message, f"✅ Баланс игрока `{uid}` увеличен на {amount} очков!", parse_mode="Markdown")
-    except:
-        bot.reply_to(message, "❌ Неверный ввод.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка ввода: {e}")
 
 def process_admin_rank(message):
     try:
-        uid, rank_id = message.text.split()
-        rank_id = rank_id.lower()
+        parts = message.text.split()
+        if len(parts) < 2:
+            bot.reply_to(message, "❌ Ошибка ввода.")
+            return
+        target_input, rank_id = parts[0], parts[1].lower()
+        uid = resolve_user_id(target_input)
+        if not uid:
+            bot.reply_to(message, f"❌ Пользователь `{target_input}` не найден.")
+            return
         if rank_id in RANKS:
             update_db("ranks", uid, rank_id)
             bot.reply_to(message, f"✅ Игроку `{uid}` выдан ранг {RANKS[rank_id]['name']}!", parse_mode="Markdown")
-    except:
-        bot.reply_to(message, "❌ Ошибка ввода.")
+        else:
+            bot.reply_to(message, "❌ Такого ранга не существует.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка ввода: {e}")
 
 def process_admin_rapper(message):
     try:
-        uid, rapper_id = message.text.split()
-        rapper_id = rapper_id.lower()
+        parts = message.text.split()
+        if len(parts) < 2:
+            bot.reply_to(message, "❌ Ошибка ввода.")
+            return
+        target_input, rapper_id = parts[0], parts[1].lower()
+        uid = resolve_user_id(target_input)
+        if not uid:
+            bot.reply_to(message, f"❌ Пользователь `{target_input}` не найден.")
+            return
         if rapper_id in RAPPERS:
             owned = get_db_val("rappers", uid, [])
             if rapper_id not in owned:
                 owned.append(rapper_id)
                 update_db("rappers", uid, owned)
             bot.reply_to(message, f"✅ Игроку `{uid}` выдан рэпер {RAPPERS[rapper_id]['name']}!", parse_mode="Markdown")
-    except:
-        bot.reply_to(message, "❌ Ошибка ввода.")
+        else:
+            bot.reply_to(message, "❌ Такого рэпера нет в магазине.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка ввода: {e}")
 
 def process_add_admin(message):
     target = message.text.strip().replace("@", "")
@@ -870,6 +977,8 @@ def process_add_admin(message):
             db["admins"] = admins
             save_data(db)
             bot.reply_to(message, f"👑 Пользователь @{target} добавлен в список админов!")
+        else:
+            bot.reply_to(message, f"⚠️ Пользователь @{target} уже админ.")
 
 def process_remove_admin(message):
     target = message.text.strip().replace("@", "")
@@ -932,7 +1041,7 @@ def profile_handler(message):
         f"{rank_color} **Игровой профиль {message.from_user.first_name}**\n\n"
         f"⭐ Роль: `{role_status}`\n"
         f"🏅 VIP ранг: {rank_name}\n"
-        f"🆔 Ваш ID для пересылки сообщений: `{user_id}`\n"
+        f"🆔 Ваш ID: `{user_id}`\n"
         f"💰 Баланс кликера: {balance} очков\n"
         f"🎒 Музыкальная команда: {rappers_str}\n"
     )
@@ -990,7 +1099,7 @@ def start_handler(message):
         message, 
         f"👋 Привет, {message.from_user.first_name}!\n\n"
         "Я готов к работе и оптимизирован для Render! 🚀\n\n"
-        "🎮 Все доступные игры, викторины, кейсы и панель отправки сообщений доступны в синей кнопке **'Меню'** слева снизу."
+        "🎮 Все игры доступны в синей кнопке 'Меню' слева снизу."
     )
 
 @bot.message_handler(commands=['click'])
@@ -998,12 +1107,11 @@ def click_handler(message):
     user_id = message.from_user.id
     save_user_by_username(message.from_user.username, user_id)
     
-    # 5% шанс технической неполадки при обычном клике (риск прогореть)
     if random.randint(1, 100) <= 5:
         current_bal = get_db_val("balance", user_id, 0)
         penalty = 100
         update_db("balance", user_id, max(0, current_bal - penalty))
-        bot.reply_to(message, f"🎸 **Ой-ой! На студии лопнула гитарная струна!**\nНа её срочную замену ушло **-{penalty} очков**.")
+        bot.reply_to(message, f"🎸 **На студии лопнула гитарная струна!**\nСписано **-{penalty} очков**.")
         return
 
     owned = get_db_val("rappers", user_id, [])
@@ -1011,7 +1119,6 @@ def click_handler(message):
     user_rank = get_db_val("ranks", user_id, "default")
     bonus = RANKS[user_rank]["bonus"] if user_rank in RANKS else 1.0
     
-    # Заработок стал сложнее: базовый клик дает всего 2 очка вместо 10
     val = int((2 + passive * 0.1) * bonus)
     new_bal = get_db_val("balance", user_id, 0) + val
     update_db("balance", user_id, new_bal)
@@ -1062,9 +1169,9 @@ def rsp_handler(message):
 @bot.message_handler(commands=['stars'])
 def stars_handler(message):
     markup = types.InlineKeyboardMarkup(row_width=1)
-    text = "🌟 **VIP Статусы за Telegram Stars!** 🌟\n\nВыбирай ранг и нажимай на кнопку ниже, чтобы моментально оплатить его звёздами и получить крутые привилегии к доходу в кликере:\n\n"
+    text = "🌟 **VIP Статусы за Telegram Stars!** 🌟\n\n"
     for k, v in RANKS.items(): 
-        text += f"• **{v['name']}** — Стоимость: {v['stars']} Stars ⭐\n"
+        text += f"• **{v['name']}** — {v['stars']} Stars ⭐\n"
         markup.add(types.InlineKeyboardButton(f"Купить {v['name']} за {v['stars']} ⭐", callback_data=f"buy_rank_inline_{k}"))
     bot.reply_to(message, text, reply_markup=markup, parse_mode="Markdown")
 
@@ -1080,7 +1187,7 @@ def process_successful_payment(message):
         rank_id = parts[2]
         user_id = int(parts[3])
         update_db("ranks", user_id, rank_id)
-        bot.reply_to(message, f"🎉 Оплата прошла успешно! Вам присвоен ранг: **{RANKS[rank_id]['name']}**!")
+        bot.reply_to(message, f"🎉 Оплата прошла! Ранг: **{RANKS[rank_id]['name']}**!")
 
 @bot.message_handler(commands=['ai'])
 def ai_handler(message):
@@ -1094,33 +1201,24 @@ def ai_handler(message):
     ]
     bot.edit_message_text(random.choice(responses), chat_id=message.chat.id, message_id=msg_waiting.message_id)
 
-# ================= АВТО-МОДЕРАЦИЯ И УВЕДОМЛЕНИЯ АДМИНОВ =================
+# ================= АВТО-МОДЕРАЦИЯ И СВЯЗКА ДАННЫХ =================
 @bot.message_handler(func=lambda msg: True, content_types=['text'])
 def auto_moderation(message):
-    # Сохраняем связку Username -> ID при любой активности
+    # Сохраняем связку логина и ID
     save_user_by_username(message.from_user.username, message.from_user.id)
 
-    # Строжайшая проверка на админа по Username автора сообщения!
-    is_sender_admin = is_user_admin(message.chat.id, message.from_user.id, message.from_user.username)
-    
-    # --- Уведомление, когда РЕАЛЬНО пишет админ ---
-    if is_sender_admin:
-        if not message.text.startswith('/'):
-            try:
-                tag_msg = bot.reply_to(message, "👑 **[Администратор на связи!]**")
-                threading.Timer(4, lambda: bot.delete_message(message.chat.id, tag_msg.message_id)).start()
-            except:
-                pass
+    # ИСПРАВЛЕНО: УДАЛЕНО МЕШАЮЩЕЕ УВЕДОМЛЕНИЕ О ТОМ, ЧТО АДМИН НА СВЯЗИ
+    if is_user_admin(message.chat.id, message.from_user.id, message.from_user.username):
         return
 
     text_lower = message.text.lower()
     
-    # 1. Защита от рекламы
+    # 1. Реклама
     if "t.me/" in text_lower or "telegram.me/" in text_lower:
         try:
             bot.delete_message(message.chat.id, message.message_id)
             bot.restrict_chat_member(message.chat.id, message.from_user.id, until_date=int(time.time() + 1800), can_send_messages=False)
-            bot.send_message(message.chat.id, f"🤫 {message.from_user.first_name} в муте на 30 мин за рекламу!")
+            bot.send_message(message.chat.id, f"🤫 {message.from_user.first_name} в муте за рекламу!")
         except: pass
         return
         
@@ -1130,7 +1228,7 @@ def auto_moderation(message):
             try:
                 bot.delete_message(message.chat.id, message.message_id)
                 bot.restrict_chat_member(message.chat.id, message.from_user.id, until_date=int(time.time() + 300), can_send_messages=False)
-                bot.send_message(message.chat.id, f"🤐 {message.from_user.first_name} в муте на 5 мин за нежелательные слова!")
+                bot.send_message(message.chat.id, f"🤐 {message.from_user.first_name} в муте за нежелательные слова!")
             except: pass
             return
 
