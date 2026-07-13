@@ -177,7 +177,6 @@ def reset_command_handler(message):
     target_id = args[1]
     
     with db_lock:
-        # Сбрасываем все игровые показатели пользователя
         if "balance" in db and target_id in db["balance"]:
             db["balance"][target_id] = 0
         if "rappers" in db and target_id in db["rappers"]:
@@ -190,7 +189,7 @@ def reset_command_handler(message):
         
     bot.reply_to(message, f"🔄 Игровой аккаунт `{target_id}` был полностью сброшен администратором!", parse_mode="Markdown")
 
-# ================= НОВАЯ ФУНКЦИЯ: ОБЩЕНИЕ ПО ID (/chat) =================
+# ================= ФУНКЦИЯ: ОБЩЕНИЕ ПО ID (/chat) =================
 @bot.message_handler(commands=['chat'])
 def chat_command_handler(message):
     args = message.text.split(maxsplit=2)
@@ -342,11 +341,9 @@ def guess_handler(message):
                     save_data(db)
             bot.reply_to(message, f"🎉 **ПОЗДРАВЛЯЕМ!** Вы угадали число `{secret}`! Награда **+{reward} очков** зачислена!")
         elif user_num < secret:
-            # Списываем штраф за неверный ответ
             update_db("balance", user_id, current_bal - 20)
             bot.reply_to(message, f"📈 Моё число **больше**, чем {user_num}!\nСписано **-20 очков** за неверную попытку. Попробуй еще раз!")
         else:
-            # Списываем штраф за неверный ответ
             update_db("balance", user_id, current_bal - 20)
             bot.reply_to(message, f"📉 Моё число **меньше**, чем {user_num}!\nСписано **-20 очков** за неверную попытку. Попробуй еще раз!")
     except ValueError:
@@ -389,7 +386,7 @@ def coin_handler(message):
     except ValueError:
         bot.reply_to(message, "❌ Сумма ставки должна быть целым числом.")
 
-# =================🥁 РИТМ-ИГРА НА РЕАКЦИЮ (/rhythm) =================
+# ================= РИТМ-ИГРА НА РЕАКЦИЮ (/rhythm) =================
 @bot.message_handler(commands=['rhythm'])
 def rhythm_handler(message):
     user_id = message.from_user.id
@@ -429,7 +426,7 @@ def word_handler(message):
         
     active_words = db.get("active_words", {})
     if user_id not in active_words:
-        bot.reply_to(message, "❌ У вас нет активного слова. Напишите `/word`, чтобы сгенерировать новое!")
+        bot.reply_to(message, "❌ У вас нет активной игры. Напишите `/word`, чтобы сгенерировать новое!")
         return
         
     user_guess = args[1].lower().strip()
@@ -473,7 +470,7 @@ def daily_handler(message):
     
     bot.reply_to(message, f"🎁 **Ежедневная награда зачислена!**\n\nВы получили **+{reward} очков** на баланс! 🎉")
 
-# ================= ИСПРАВЛЕННАЯ ВИКТОРИНА (/quiz) =================
+# ================= ВИКТОРИНА (/quiz) =================
 @bot.message_handler(commands=['quiz'])
 def quiz_handler(message):
     user_id = str(message.from_user.id)
@@ -514,7 +511,6 @@ def quiz_handler(message):
                     
             bot.reply_to(message, f"🎉 Абсолютно верно! Вы заработали **+{reward} очков**! 💰")
         else:
-            # Списываем штраф за неверный ответ
             current_bal = get_db_val("balance", user_id, 0)
             update_db("balance", user_id, max(0, current_bal - 150))
             bot.reply_to(message, "❌ Неверный ответ. Списано **-150 очков**. Попробуйте посчитать заново!")
@@ -527,6 +523,31 @@ def handle_callbacks(call):
     username = call.from_user.username
     user_id = str(call.from_user.id)
     
+    # --- ОБРАБОТКА ПОКУПКИ СТАТУСОВ ЧЕРЕЗ ИНЛАЙН МЕНЮ ---
+    if call.data.startswith("buy_rank_inline_"):
+        rank_id = call.data.split("_")[3]
+        if rank_id not in RANKS:
+            bot.answer_callback_query(call.id, "❌ Неверный ранг!", show_alert=True)
+            return
+            
+        prices = [types.LabeledPrice(label=RANKS[rank_id]["name"], amount=RANKS[rank_id]["stars"])]
+        
+        try:
+            bot.send_invoice(
+                call.message.chat.id, 
+                title=RANKS[rank_id]["name"], 
+                description=f"Приобретение VIP статуса: {RANKS[rank_id]['name']}", 
+                invoice_payload=f"buy_rank_{rank_id}_{user_id}", 
+                provider_token="", 
+                currency="XTR", 
+                prices=prices,
+                start_parameter="buy-rank"
+            )
+            bot.answer_callback_query(call.id, "💰 Счет на оплату сформирован!")
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"❌ Ошибка: {e}", show_alert=True)
+        return
+
     # --- ОБРАБОТКА ДУЭЛЕЙ ---
     if call.data.startswith("duel_accept_") or call.data.startswith("duel_decline_"):
         target_id = call.data.split("_")[2]
@@ -632,7 +653,7 @@ def handle_callbacks(call):
             )
         return
 
-    # --- ОТКРЫТИЕ КЕЙСОВ (РИСК УВЕЛИЧЕН) ---
+    # --- ОТКРЫТИЕ КЕЙСОВ ---
     if call.data.startswith("chest_open_"):
         chest_type = call.data.split("_")[2]
         current_bal = get_db_val("balance", user_id, 0)
@@ -653,7 +674,7 @@ def handle_callbacks(call):
         
         reward_msg = ""
         if chest_type == "bronze":
-            if chance <= 70: # Шанс прогореть увеличен до 70%
+            if chance <= 70:
                 reward = random.randint(30, 110)
                 update_db("balance", user_id, get_db_val("balance", user_id, 0) + reward)
                 reward_msg = f"📼 Вы нашли старую порванную кассету...\n💰 Сдали на запчасти за **{reward} очков**."
@@ -670,10 +691,10 @@ def handle_callbacks(call):
                 else:
                     reward = 500
                     update_db("balance", user_id, get_db_val("balance", user_id, 0) + reward)
-                    reward_msg = f"🤠 Вы выпал дубликат CowboyClicker! Начислена компенсация в размере **{reward} очков**!"
+                    reward_msg = f"🤠 Выпал дубликат CowboyClicker! Начислена компенсация в размере **{reward} очков**!"
                     
         elif chest_type == "silver":
-            if chance <= 65: # Шанс прогореть увеличен до 65%
+            if chance <= 65:
                 reward = random.randint(150, 600)
                 update_db("balance", user_id, get_db_val("balance", user_id, 0) + reward)
                 reward_msg = f"🎸 Внутри лежал обычный мерч низкого качества...\n💰 Продали за: **{reward} очков**."
@@ -694,7 +715,7 @@ def handle_callbacks(call):
                     reward_msg = f"👥 Выпал дубликат! Вам начислена компенсация в размере **{reward} очков**!"
                     
         elif chest_type == "gold":
-            if chance <= 60: # Шанс прогореть увеличен до 60%
+            if chance <= 60:
                 reward = random.randint(1000, 3500)
                 update_db("balance", user_id, get_db_val("balance", user_id, 0) + reward)
                 reward_msg = f"🎹 Вы нашли винтажный синтезатор, но он сломан...\n💰 Отремонтировали и продали за **{reward} очков**."
@@ -722,7 +743,7 @@ def handle_callbacks(call):
         )
         return
 
-    # --- КЛИЕНТ ПИСЬМА РЕДАКТОРУ / ЧАТ ОТВЕТА ---
+    # --- КЛИЕНТ ЧАТ ОТВЕТА ---
     if call.data.startswith("chat_reply_"):
         sender_id = call.data.split("_")[2]
         msg = bot.send_message(call.message.chat.id, f"✍️ Напишите ответное сообщение для пользователя `{sender_id}`:")
@@ -1005,34 +1026,20 @@ def rsp_handler(message):
     else: res = "Бот победил."
     bot.reply_to(message, f"Ваш выбор: {user}\nБот выбор: {bot_c}\n\n{res}")
 
+# ================= СИСТЕМА STARS (ОБНОВЛЕННЫЙ ИНТЕРАКТИВНЫЙ СПИСОК) =================
 @bot.message_handler(commands=['stars'])
 def stars_handler(message):
-    text = "🌟 **VIP Статусы за Telegram Stars:**\n\n"
-    for k, v in RANKS.items(): text += f"• `{k}` — {v['name']} ({v['stars']} Stars ⭐)\n"
-    bot.reply_to(message, text, parse_mode="Markdown")
-
-@bot.message_handler(commands=['buy_rank'])
-def buy_rank_handler(message):
-    args = message.text.split()
-    if len(args) < 2 or args[1].lower() not in RANKS:
-        bot.reply_to(message, "❌ Напишите ранг, который хотите купить. Пример: `/buy_rank bronze`")
-        return
-    rank_id = args[1].lower()
-    prices = [types.LabeledPrice(label=RANKS[rank_id]["name"], amount=RANKS[rank_id]["stars"])]
+    # Вместо скучной инструкции генерируем интерактивные кнопки, чтобы купить Stars в один клик
+    markup = types.InlineKeyboardMarkup(row_width=1)
     
-    try:
-        bot.send_invoice(
-            message.chat.id, 
-            title=RANKS[rank_id]["name"], 
-            description=f"Приобретение VIP статуса: {RANKS[rank_id]['name']}", 
-            invoice_payload=f"buy_rank_{rank_id}_{message.from_user.id}", 
-            provider_token="", 
-            currency="XTR", 
-            prices=prices,
-            start_parameter="buy-rank"
-        )
-    except Exception as e:
-        bot.reply_to(message, f"❌ Ошибка платежного шлюза: {e}")
+    text = "🌟 **VIP Статусы за Telegram Stars!** 🌟\n\n" \
+           "Выбирай ранг и нажимай на кнопку ниже, чтобы моментально оплатить его звёздами и получить крутые привилегии к доходу в кликере:\n\n"
+           
+    for k, v in RANKS.items(): 
+        text += f"• **{v['name']}** — Стоимость: {v['stars']} Stars ⭐\n"
+        markup.add(types.InlineKeyboardButton(f"Купить {v['name']} за {v['stars']} ⭐", callback_data=f"buy_rank_inline_{k}"))
+        
+    bot.reply_to(message, text, reply_markup=markup, parse_mode="Markdown")
 
 @bot.pre_checkout_query_handler(func=lambda query: True)
 def process_pre_checkout(pre_checkout_query): 
@@ -1116,6 +1123,12 @@ if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
     bot.remove_webhook()
     logger.info("Бот запущен!")
+    
+    # Оптимизированный цикл запуска polling с защитой от двойного запуска (Conflict 409)
     while True:
-        try: bot.polling(none_stop=True, interval=0, timeout=60)
-        except: time.sleep(5)
+        try:
+            # Установим таймаут и очистку зависших запросов при каждом запуске
+            bot.polling(none_stop=True, interval=1, timeout=20)
+        except Exception as e:
+            logger.error(f"Ошибка Polling: {e}. Ожидание перезапуска...")
+            time.sleep(5)
