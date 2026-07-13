@@ -44,12 +44,15 @@ RANKS = {
     "legend": {"name": "👑 Легендарный", "stars": 200, "bonus": 3.0, "color": "🔴"}
 }
 
-# ========== ПЕРСОНАЖИ ==========
+# ========== ПЕРСОНАЖИ (ОБНОВЛЕННЫЕ И БОЛЕЕ СЛОЖНЫЕ) ==========
 RAPPERS = {
     "cowboy": {"name": "🤠 CowboyClicker", "price": 1000, "income": 5},
     "beatboxer": {"name": "🎤 BeatBoxer", "price": 5000, "income": 30},
     "dj_cloud": {"name": "🎧 DJ Cloud", "price": 15000, "income": 100},
-    "electro": {"name": "⚡ Electro-Rapper", "price": 50000, "income": 500}
+    "electro": {"name": "⚡ Electro-Rapper", "price": 50000, "income": 500},
+    "ruha40": {"name": "🔥 Руха 40", "price": 150000, "income": 1200},
+    "russiamafia": {"name": "🦾 russiamafiaextra", "price": 300000, "income": 2500},
+    "semetary": {"name": "🪓 Semetary", "price": 600000, "income": 6000}
 }
 
 # ================= СОХРАНЕНИЕ И ЗАГРУЗКА ДАННЫХ =================
@@ -70,6 +73,8 @@ def load_data():
                     data["duel_invites"] = {}
                 if "last_daily" not in data:
                     data["last_daily"] = {}
+                if "username_to_id" not in data:
+                    data["username_to_id"] = {}
                 return data
         except Exception as e:
             logger.error(f"Ошибка при загрузке данных: {e}")
@@ -84,7 +89,8 @@ def load_data():
         "active_words": {},
         "active_numbers": {},
         "duel_invites": {},
-        "last_daily": {}
+        "last_daily": {},
+        "username_to_id": {}
     }
 
 def save_data(data):
@@ -109,6 +115,15 @@ def get_db_val(key, user_id, default):
     user_str = str(user_id)
     return db.get(key, {}).get(user_str, default)
 
+# Маппинг юзернеймов в ID для связи по юзернейму
+def save_user_by_username(username, user_id):
+    if username:
+        with db_lock:
+            if "username_to_id" not in db:
+                db["username_to_id"] = {}
+            db["username_to_id"][username.lower().replace("@", "")] = str(user_id)
+            save_data(db)
+
 # Проверка, является ли пользователь админом
 def is_user_admin(chat_id, user_id, username=None):
     if username and username.lower() == OWNER_USERNAME.lower():
@@ -121,7 +136,7 @@ def is_user_admin(chat_id, user_id, username=None):
     except Exception:
         return False
 
-# Синяя кнопка "Меню"
+# Синяя кнопка "Меню" (Полный список доступных команд для обычных людей)
 def set_bot_commands():
     try:
         commands = [
@@ -137,7 +152,7 @@ def set_bot_commands():
             types.BotCommand("coin", "🪙 Виртуальная монетка"),
             types.BotCommand("rhythm", "🥁 Ритм-игра на реакцию"),
             types.BotCommand("daily", "🎁 Забрать ежедневный бонус"),
-            types.BotCommand("chat", "✉️ Личное сообщение по ID"),
+            types.BotCommand("chat", "✉️ Личное сообщение по ID или Юзеру"),
             types.BotCommand("stars", "VIP ранги за звезды"),
             types.BotCommand("ai", "Задать вопрос ИИ"),
             types.BotCommand("admin", "🔐 Админ-панель управления")
@@ -189,25 +204,38 @@ def reset_command_handler(message):
         
     bot.reply_to(message, f"🔄 Игровой аккаунт `{target_id}` был полностью сброшен администратором!", parse_mode="Markdown")
 
-# ================= ФУНКЦИЯ: ОБЩЕНИЕ ПО ID (/chat) =================
+# ================= ФУНКЦИЯ: ОБЩЕНИЕ ПО ID И ЮЗЕРНЕЙМУ (/chat) =================
 @bot.message_handler(commands=['chat'])
 def chat_command_handler(message):
     args = message.text.split(maxsplit=2)
     if len(args) < 3:
         bot.reply_to(
             message,
-            "✉️ **Личные сообщения по игровому ID!**\n\n"
+            "✉️ **Личные сообщения по ID или Юзернейму!**\n\n"
             "Используйте формат:\n"
-            "`/chat [ID пользователя] [Ваше сообщение]`\n\n"
-            "_Пример: /chat 1234567 Привет, классный рэпер у тебя в профиле!_",
+            "`/chat [ID или @username] [Ваше сообщение]`\n\n"
+            "_Пример 1: /chat 1234567 Привет!_\n"
+            "_Пример 2: /chat @prostokiril Твой бот супер!_",
             parse_mode="Markdown"
         )
         return
         
-    target_id = args[1]
+    target_input = args[1].strip()
     user_msg = args[2]
     sender_name = message.from_user.first_name
     sender_id = message.from_user.id
+    
+    target_id = None
+    
+    # Определение: передан ID или Юзернейм
+    if target_input.startswith("@") or not target_input.isdigit():
+        clean_username = target_input.replace("@", "").lower()
+        target_id = db.get("username_to_id", {}).get(clean_username)
+        if not target_id:
+            bot.reply_to(message, f"❌ Не удалось найти пользователя `{target_input}` в базе данных бота. Он должен хотя бы раз запустить бота.", parse_mode="Markdown")
+            return
+    else:
+        target_id = target_input
     
     if str(target_id) == str(sender_id):
         bot.reply_to(message, "❌ Нельзя отправлять сообщения самому себе!")
@@ -227,7 +255,7 @@ def chat_command_handler(message):
         )
         bot.reply_to(message, "✅ Сообщение успешно доставлено получателю!")
     except Exception as e:
-        bot.reply_to(message, "❌ Не удалось отправить сообщение. Похоже, этот пользователь ещё не запустил бота или указан неверный ID.")
+        bot.reply_to(message, "❌ Не удалось отправить сообщение. Похоже, этот пользователь заблокировал бота.")
 
 # ================= МУЛЬТИПЛЕЕР (МУЗЫКАЛЬНЫЕ ДУЭЛИ) =================
 @bot.message_handler(commands=['duel'])
@@ -725,15 +753,15 @@ def handle_callbacks(call):
                 reward_msg = f"💿 **УСПЕШНЫЙ СИНГЛ!** Ваш трек попал в радио-эфиры!\n💰 Награда: **{reward} очков**! 🔥"
             else:
                 owned = get_db_val("rappers", user_id, [])
-                rapper_get = random.choice(["dj_cloud", "electro"])
+                rapper_get = random.choice(["dj_cloud", "electro", "ruha40", "russiamafia", "semetary"])
                 if rapper_get not in owned:
                     owned.append(rapper_get)
                     update_db("rappers", user_id, owned)
-                    reward_msg = f"⚡ **НЕВЕРОЯТНО!** Вы выиграли ЛЕГЕНДАРНОГО персонажа **{RAPPERS[rapper_get]['name']}** совершенно бесплатно! 👑"
+                    reward_msg = f"⚡ **НЕВЕРОЯТНО!** Вы выиграли крутого персонажа **{RAPPERS[rapper_get]['name']}** совершенно бесплатно! 👑"
                 else:
                     reward = 15000
                     update_db("balance", user_id, get_db_val("balance", user_id, 0) + reward)
-                    reward_msg = f"💎 **ДУБЛИКАТ ЛЕГЕНДЫ!** Вам зачислен бонус в размере **{reward} очков**!"
+                    reward_msg = f"💎 **ДУБЛИКАТ ПЕРСОНАЖА!** Вам зачислен бонус в размере **{reward} очков**!"
                     
         bot.edit_message_text(
             chat_id=call.message.chat.id,
@@ -763,7 +791,7 @@ def handle_callbacks(call):
         msg = bot.send_message(call.message.chat.id, "Введите ID пользователя и ранг (bronze, silver, gold, platinum, legend):\n`[ID] [ранг]`")
         bot.register_next_step_handler(msg, process_admin_rank)
     elif action == "adm_give_rapper":
-        msg = bot.send_message(call.message.chat.id, "Введите ID пользователя и код рэпера (cowboy, beatboxer, dj_cloud, electro):\n`[ID] [рэпер]`")
+        msg = bot.send_message(call.message.chat.id, "Введите ID пользователя и код рэпера (cowboy, beatboxer, dj_cloud, electro, ruha40, russiamafia, semetary):\n`[ID] [рэпер]`")
         bot.register_next_step_handler(msg, process_admin_rapper)
     elif action == "adm_add_admin":
         if not username or username.lower() != OWNER_USERNAME.lower():
@@ -957,16 +985,18 @@ def warn_handler(message):
 # ================= КЛИКЕР И ШОП =================
 @bot.message_handler(commands=['start'])
 def start_handler(message):
+    save_user_by_username(message.from_user.username, message.from_user.id)
     bot.reply_to(
         message, 
         f"👋 Привет, {message.from_user.first_name}!\n\n"
         "Я готов к работе и оптимизирован для Render! 🚀\n\n"
-        "🎮 Все доступные игры, викторины, кейсы и панель отправки сообщений по ID доступны в синей кнопке **'Меню'** слева снизу."
+        "🎮 Все доступные игры, викторины, кейсы и панель отправки сообщений доступны в синей кнопке **'Меню'** слева снизу."
     )
 
 @bot.message_handler(commands=['click'])
 def click_handler(message):
     user_id = message.from_user.id
+    save_user_by_username(message.from_user.username, user_id)
     
     # 5% шанс технической неполадки при обычном клике (риск прогореть)
     if random.randint(1, 100) <= 5:
@@ -980,7 +1010,9 @@ def click_handler(message):
     passive = sum([RAPPERS[item]["income"] for item in owned if item in RAPPERS])
     user_rank = get_db_val("ranks", user_id, "default")
     bonus = RANKS[user_rank]["bonus"] if user_rank in RANKS else 1.0
-    val = int((10 + passive * 0.1) * bonus)
+    
+    # Заработок стал сложнее: базовый клик дает всего 2 очка вместо 10
+    val = int((2 + passive * 0.1) * bonus)
     new_bal = get_db_val("balance", user_id, 0) + val
     update_db("balance", user_id, new_bal)
     bot.reply_to(message, f"🖱 +{val} очков! Баланс: {new_bal}")
@@ -1026,19 +1058,14 @@ def rsp_handler(message):
     else: res = "Бот победил."
     bot.reply_to(message, f"Ваш выбор: {user}\nБот выбор: {bot_c}\n\n{res}")
 
-# ================= СИСТЕМА STARS (ОБНОВЛЕННЫЙ ИНТЕРАКТИВНЫЙ СПИСОК) =================
+# ================= СИСТЕМА STARS =================
 @bot.message_handler(commands=['stars'])
 def stars_handler(message):
-    # Вместо скучной инструкции генерируем интерактивные кнопки, чтобы купить Stars в один клик
     markup = types.InlineKeyboardMarkup(row_width=1)
-    
-    text = "🌟 **VIP Статусы за Telegram Stars!** 🌟\n\n" \
-           "Выбирай ранг и нажимай на кнопку ниже, чтобы моментально оплатить его звёздами и получить крутые привилегии к доходу в кликере:\n\n"
-           
+    text = "🌟 **VIP Статусы за Telegram Stars!** 🌟\n\nВыбирай ранг и нажимай на кнопку ниже, чтобы моментально оплатить его звёздами и получить крутые привилегии к доходу в кликере:\n\n"
     for k, v in RANKS.items(): 
         text += f"• **{v['name']}** — Стоимость: {v['stars']} Stars ⭐\n"
         markup.add(types.InlineKeyboardButton(f"Купить {v['name']} за {v['stars']} ⭐", callback_data=f"buy_rank_inline_{k}"))
-        
     bot.reply_to(message, text, reply_markup=markup, parse_mode="Markdown")
 
 @bot.pre_checkout_query_handler(func=lambda query: True)
@@ -1070,7 +1097,10 @@ def ai_handler(message):
 # ================= АВТО-МОДЕРАЦИЯ И УВЕДОМЛЕНИЯ АДМИНОВ =================
 @bot.message_handler(func=lambda msg: True, content_types=['text'])
 def auto_moderation(message):
-    # Строжайшая проверка на админа по Username и ID
+    # Сохраняем связку Username -> ID при любой активности
+    save_user_by_username(message.from_user.username, message.from_user.id)
+
+    # Строжайшая проверка на админа по Username автора сообщения!
     is_sender_admin = is_user_admin(message.chat.id, message.from_user.id, message.from_user.username)
     
     # --- Уведомление, когда РЕАЛЬНО пишет админ ---
@@ -1078,7 +1108,6 @@ def auto_moderation(message):
         if not message.text.startswith('/'):
             try:
                 tag_msg = bot.reply_to(message, "👑 **[Администратор на связи!]**")
-                # Автоудаление через 4 секунды
                 threading.Timer(4, lambda: bot.delete_message(message.chat.id, tag_msg.message_id)).start()
             except:
                 pass
@@ -1086,7 +1115,7 @@ def auto_moderation(message):
 
     text_lower = message.text.lower()
     
-    # 1. Защита от рекламы t.me
+    # 1. Защита от рекламы
     if "t.me/" in text_lower or "telegram.me/" in text_lower:
         try:
             bot.delete_message(message.chat.id, message.message_id)
@@ -1124,10 +1153,8 @@ if __name__ == "__main__":
     bot.remove_webhook()
     logger.info("Бот запущен!")
     
-    # Оптимизированный цикл запуска polling с защитой от двойного запуска (Conflict 409)
     while True:
         try:
-            # Установим таймаут и очистку зависших запросов при каждом запуске
             bot.polling(none_stop=True, interval=1, timeout=20)
         except Exception as e:
             logger.error(f"Ошибка Polling: {e}. Ожидание перезапуска...")
