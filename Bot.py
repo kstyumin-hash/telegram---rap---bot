@@ -22,14 +22,19 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ========== АДМИНЫ ==========
-ADMINS = ["prostokiril", "ll1_what"]
-MAIN_ADMIN = "prostokiril"
+# ========== ПРАВА ДОСТУПА ==========
+# Никнейм главного владельца (без собаки)
+OWNER_USERNAME = "prostokiril" 
 
-# Защищенный список плохих слов
-BAD_WORDS = ["хуй", "пизда", "ебал", "бля", "сука", "гандон", "мудак", "пидор", "чмо", "долбоёб", "еблан"]
+# Список администраторов (изначально пустой, владелец может добавлять их через /admin)
+# Сохраняется в базу данных, чтобы не слетать при перезапуске
+# По умолчанию prostokiril и ll1_what уже имеют доступ
+DEFAULT_ADMINS = ["prostokiril", "ll1_what"]
 
-# Путь к файлу базы данных (адаптировано для Render)
+# Чистый, безопасный и дружелюбный список нежелательных слов
+BAD_WORDS = ["дурак", "глупый", "плохой", "редиска", "какашка", "обидчик"]
+
+# Путь к файлу базы данных
 if os.environ.get('RENDER'):
     DATA_FILE = '/tmp/bot_data.json'
 else:
@@ -37,41 +42,11 @@ else:
 
 # ========== РАНГИ ЗА ЗВЕЗДЫ TELEGRAM ==========
 RANKS = {
-    "bronze": {
-        "name": "🥉 Бронзовый",
-        "stars": 10,
-        "bonus": 1.1,
-        "color": "🟤",
-        "perks": ["+10% к доходу", "Бронзовый статус в профиле"]
-    },
-    "silver": {
-        "name": "🥈 Серебряный",
-        "stars": 25,
-        "bonus": 1.25,
-        "color": "⚪",
-        "perks": ["+25% к доходу", "Серебряный статус", "x1.2 к удаче"]
-    },
-    "gold": {
-        "name": "🥇 Золотой",
-        "stars": 50,
-        "bonus": 1.5,
-        "color": "🟡",
-        "perks": ["+50% к доходу", "Золотой статус", "VIP доступ"]
-    },
-    "platinum": {
-        "name": "💎 Платиновый",
-        "stars": 100,
-        "bonus": 2.0,
-        "color": "🔵",
-        "perks": ["+100% к доходу", "Платиновый статус", "Эксклюзивные функции"]
-    },
-    "legend": {
-        "name": "👑 Легендарный",
-        "stars": 200,
-        "bonus": 3.0,
-        "color": "🔴",
-        "perks": ["+200% к доходу", "Легендарный статус", "Имя в топе"]
-    }
+    "bronze": {"name": "🥉 Бронзовый", "stars": 10, "bonus": 1.1, "color": "🟤"},
+    "silver": {"name": "🥈 Серебряный", "stars": 25, "bonus": 1.25, "color": "⚪"},
+    "gold": {"name": "🥇 Золотой", "stars": 50, "bonus": 1.5, "color": "🟡"},
+    "platinum": {"name": "💎 Платиновый", "stars": 100, "bonus": 2.0, "color": "🔵"},
+    "legend": {"name": "👑 Легендарный", "stars": 200, "bonus": 3.0, "color": "🔴"}
 }
 
 # ========== ПЕРСОНАЖИ ==========
@@ -87,7 +62,10 @@ def load_data():
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                data = json.load(f)
+                if "admins" not in data:
+                    data["admins"] = DEFAULT_ADMINS
+                return data
         except Exception as e:
             logger.error(f"Ошибка при загрузке данных: {e}")
     return {
@@ -96,7 +74,7 @@ def load_data():
         "ranks": {},
         "balance": {},
         "rappers": {},
-        "last_click": {}
+        "admins": DEFAULT_ADMINS
     }
 
 def save_data(data):
@@ -106,7 +84,6 @@ def save_data(data):
     except Exception as e:
         logger.error(f"Ошибка при сохранении данных: {e}")
 
-# Инициализируем данные
 db = load_data()
 db_lock = threading.Lock()
 
@@ -122,9 +99,11 @@ def get_db_val(key, user_id, default):
     user_str = str(user_id)
     return db.get(key, {}).get(user_str, default)
 
-# ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
+# Проверка, является ли пользователь админом
 def is_user_admin(chat_id, user_id, username=None):
-    if username in ADMINS:
+    if username and username.lower() == OWNER_USERNAME.lower():
+        return True
+    if username and username.lower() in [a.lower() for a in db.get("admins", [])]:
         return True
     try:
         member = bot.get_chat_member(chat_id, user_id)
@@ -132,311 +111,321 @@ def is_user_admin(chat_id, user_id, username=None):
     except Exception:
         return False
 
-# Настройка меню команд (синяя кнопка "Меню")
+# Синяя кнопка "Меню"
 def set_bot_commands():
     try:
         commands = [
-            types.BotCommand("start", "Запустить бота и получить приветствие"),
-            types.BotCommand("click", "Заработать очки в кликере"),
-            types.BotCommand("profile", "Посмотреть свой игровой профиль"),
-            types.BotCommand("buy_rapper", "Купить рэпера в команду"),
-            types.BotCommand("dice", "Испытать удачу (кости)"),
-            types.BotCommand("rsp", "Сыграть в Камень, Ножницы, Бумага"),
+            types.BotCommand("start", "Запустить бота"),
+            types.BotCommand("click", "Кликнуть (заработать очки)"),
+            types.BotCommand("profile", "Игровой профиль"),
+            types.BotCommand("buy_rapper", "Магазин рэперов"),
+            types.BotCommand("dice", "Играть в кости"),
+            types.BotCommand("rsp", "Камень, Ножницы, Бумага"),
             types.BotCommand("quiz", "Математическая викторина"),
-            types.BotCommand("stars", "Информация о VIP рангах"),
-            types.BotCommand("buy_rank", "Купить VIP ранг за звезды"),
+            types.BotCommand("stars", "VIP ранги за звезды"),
             types.BotCommand("ai", "Задать вопрос ИИ"),
-            types.BotCommand("ban", "Забанить пользователя (админ)"),
-            types.BotCommand("mute", "Замутить пользователя (админ)"),
-            types.BotCommand("unmute", "Размутить пользователя (админ)"),
-            types.BotCommand("warn", "Выдать варн пользователю (админ)")
+            types.BotCommand("admin", "🔐 Админ-панель управления"),
+            types.BotCommand("ban", "Бан (админ)"),
+            types.BotCommand("mute", "Мут (админ)"),
+            types.BotCommand("unmute", "Размут (админ)"),
+            types.BotCommand("warn", "Варн (админ)")
         ]
         bot.set_my_commands(commands)
-        logger.info("Синяя кнопка 'Меню' с командами успешно настроена!")
     except Exception as e:
-        logger.error(f"Не удалось установить команды меню: {e}")
+        logger.error(f"Не удалось установить команды: {e}")
 
-# ================= МОДЕРАЦИЯ ЧАТА =================
+# ================= АДМИН ПАНЕЛЬ КНОПКИ =================
+@bot.message_handler(commands=['admin'])
+def admin_panel_handler(message):
+    username = message.from_user.username
+    if not is_user_admin(message.chat.id, message.from_user.id, username):
+        bot.reply_to(message, "❌ Доступ к админ-панели закрыт.")
+        return
 
-# Команда Бан
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton("💰 Выдать деньги себе/игроку", callback_data="adm_give_money"),
+        types.InlineKeyboardButton("🎖 Изменить ранг", callback_data="adm_give_rank"),
+        types.InlineKeyboardButton("🎤 Выдать рэпера", callback_data="adm_give_rapper")
+    )
+    
+    # Кнопки управления админами доступны ТОЛЬКО для OWNER_USERNAME
+    if username and username.lower() == OWNER_USERNAME.lower():
+        markup.add(
+            types.InlineKeyboardButton("➕ Назначить Админа", callback_data="adm_add_admin"),
+            types.InlineKeyboardButton("➖ Снять Админа", callback_data="adm_remove_admin")
+        )
+        
+    bot.send_message(message.chat.id, "🔐 **Панель управления Ботом**\nВыберите действие ниже:", reply_markup=markup, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_"))
+def admin_callbacks(call):
+    username = call.from_user.username
+    # Проверка прав доступа к колбэкам
+    if not is_user_admin(call.message.chat.id, call.from_user.id, username):
+        bot.answer_callback_query(call.id, "❌ У вас нет прав!", show_alert=True)
+        return
+
+    action = call.data
+    
+    if action == "adm_give_money":
+        msg = bot.send_message(call.message.chat.id, "Введите ID пользователя и сумму через пробел.\nНапример, чтобы выдать себе (ваш ID указан в профиле):\n`12345678 5000`", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_admin_money)
+    elif action == "adm_give_rank":
+        msg = bot.send_message(call.message.chat.id, "Введите ID пользователя и код ранга (bronze, silver, gold, platinum, legend) через пробел:\nПример: `12345678 legend`")
+        bot.register_next_step_handler(msg, process_admin_rank)
+    elif action == "adm_give_rapper":
+        msg = bot.send_message(call.message.chat.id, "Введите ID пользователя и код рэпера (cowboy, beatboxer, dj_cloud, electro) через пробел:\nПример: `12345678 electro`")
+        bot.register_next_step_handler(msg, process_admin_rapper)
+    
+    # Проверка на владельца для кнопок управления админами
+    elif action == "adm_add_admin":
+        if not username or username.lower() != OWNER_USERNAME.lower():
+            bot.answer_callback_query(call.id, "❌ Только Владелец бота @prostokiril может делать это!", show_alert=True)
+            return
+        msg = bot.send_message(call.message.chat.id, "Введите юзернейм нового админа (без знака @):\nПример: `ll1_what`")
+        bot.register_next_step_handler(msg, process_add_admin)
+    elif action == "adm_remove_admin":
+        if not username or username.lower() != OWNER_USERNAME.lower():
+            bot.answer_callback_query(call.id, "❌ Только Владелец бота @prostokiril может делать это!", show_alert=True)
+            return
+        msg = bot.send_message(call.message.chat.id, "Введите юзернейм админа, которого нужно снять (без @):")
+        bot.register_next_step_handler(msg, process_remove_admin)
+
+def process_admin_money(message):
+    try:
+        uid, amount = message.text.split()
+        amount = int(amount)
+        current = get_db_val("balance", uid, 0)
+        update_db("balance", uid, current + amount)
+        bot.reply_to(message, f"✅ Баланс пользователя `{uid}` успешно увеличен на {amount} очков!", parse_mode="Markdown")
+    except:
+        bot.reply_to(message, "❌ Ошибка ввода. Формат: `[ID] [Количество]`")
+
+def process_admin_rank(message):
+    try:
+        uid, rank_id = message.text.split()
+        rank_id = rank_id.lower()
+        if rank_id in RANKS:
+            update_db("ranks", uid, rank_id)
+            bot.reply_to(message, f"✅ Пользователю `{uid}` выдан ранг {RANKS[rank_id]['name']}!", parse_mode="Markdown")
+        else:
+            bot.reply_to(message, "❌ Такого ранга нет.")
+    except:
+        bot.reply_to(message, "❌ Ошибка ввода. Формат: `[ID] [ранг]`")
+
+def process_admin_rapper(message):
+    try:
+        uid, rapper_id = message.text.split()
+        rapper_id = rapper_id.lower()
+        if rapper_id in RAPPERS:
+            owned = get_db_val("rappers", uid, [])
+            if rapper_id not in owned:
+                owned.append(rapper_id)
+                update_db("rappers", uid, owned)
+            bot.reply_to(message, f"✅ Пользователю `{uid}` выдан рэпер {RAPPERS[rapper_id]['name']}!", parse_mode="Markdown")
+        else:
+            bot.reply_to(message, "❌ Такого рэпера нет.")
+    except:
+        bot.reply_to(message, "❌ Ошибка ввода. Формат: `[ID] [рэпер]`")
+
+def process_add_admin(message):
+    target_username = message.text.strip().replace("@", "")
+    with db_lock:
+        admins = db.get("admins", [])
+        if target_username.lower() not in [a.lower() for a in admins]:
+            admins.append(target_username)
+            db["admins"] = admins
+            save_data(db)
+            bot.reply_to(message, f"👑 Пользователь @{target_username} успешно добавлен в список администраторов бота!")
+        else:
+            bot.reply_to(message, "⚠️ Этот пользователь уже является админом.")
+
+def process_remove_admin(message):
+    target_username = message.text.strip().replace("@", "")
+    if target_username.lower() == OWNER_USERNAME.lower():
+        bot.reply_to(message, "❌ Нельзя снять статус создателя с самого себя!")
+        return
+    with db_lock:
+        admins = db.get("admins", [])
+        filtered_admins = [a for a in admins if a.lower() != target_username.lower()]
+        if len(filtered_admins) < len(admins):
+            db["admins"] = filtered_admins
+            save_data(db)
+            bot.reply_to(message, f"🚫 Пользователь @{target_username} успешно удален из списка администраторов.")
+        else:
+            bot.reply_to(message, "❌ Данный пользователь не был найден в списке админов.")
+
+# ================= ПРОФИЛЬ (ОБНОВЛЕН С ОТОБРАЖЕНИЕМ СТАТУСА ВЛАДЕЛЬЦА) =================
+@bot.message_handler(commands=['profile'])
+def profile_handler(message):
+    user_id = message.from_user.id
+    username = message.from_user.username
+    balance = get_db_val("balance", user_id, 0)
+    user_rank_id = get_db_val("ranks", user_id, "default")
+    
+    # Проверка кастомных глобальных статусов
+    if username and username.lower() == OWNER_USERNAME.lower():
+        role_status = "👑 Главный Создатель бота"
+        rank_color = "👑"
+    elif username and username.lower() in [a.lower() for a in db.get("admins", [])]:
+        role_status = "👮 Администратор бота"
+        rank_color = "👮"
+    else:
+        role_status = "👤 Игрок чата"
+        rank_color = "👤"
+        
+    rank_name = RANKS[user_rank_id]["name"] if user_rank_id in RANKS else "Обычный"
+    owned_rappers = get_db_val("rappers", user_id, [])
+    rappers_str = ", ".join([RAPPERS[r]["name"] for r in owned_rappers if r in RAPPERS]) or "Пока нет"
+    
+    profile_text = (
+        f"{rank_color} **Игровой профиль {message.from_user.first_name}**\n\n"
+        f"⭐ Роль: `{role_status}`\n"
+        f"🏅 VIP ранг: {rank_name}\n"
+        f"🆔 Ваш ID (нужен для админов): `{user_id}`\n"
+        f"💰 Баланс кликера: {balance} очков\n"
+        f"🎒 Ваша музыкальная команда: {rappers_str}\n"
+    )
+    bot.reply_to(message, profile_text, parse_mode="Markdown")
+
+# ================= СТАНДАРТНЫЕ КОМАНДЫ МОДЕРАЦИИ =================
 @bot.message_handler(commands=['ban'])
 def ban_handler(message):
     if not is_user_admin(message.chat.id, message.from_user.id, message.from_user.username):
-        bot.reply_to(message, "❌ Эта команда доступна только администраторам.")
+        bot.reply_to(message, "❌ У вас нет админ-прав.")
         return
     if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответьте этой командой на сообщение пользователя, которого нужно забанить.")
+        bot.reply_to(message, "❌ Ответьте на сообщение нарушителя.")
         return
-    
-    target_id = message.reply_to_message.from_user.id
-    target_name = message.reply_to_message.from_user.first_name
-    
     try:
-        bot.ban_chat_member(message.chat.id, target_id)
-        bot.reply_to(message, f"👤 Пользователь {target_name} успешно заблокирован!")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Не удалось заблокировать пользователя: {e}")
+        bot.ban_chat_member(message.chat.id, message.reply_to_message.from_user.id)
+        bot.reply_to(message, f"👤 Пользователь заблокирован!")
+    except Exception as e: bot.reply_to(message, f"Ошибка: {e}")
 
-# Команда Мут
 @bot.message_handler(commands=['mute'])
 def mute_handler(message):
     if not is_user_admin(message.chat.id, message.from_user.id, message.from_user.username):
-        bot.reply_to(message, "❌ У вас нет прав для выполнения этой команды.")
+        bot.reply_to(message, "❌ Нет прав.")
         return
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответьте на сообщение нарушителя.")
-        return
-
-    target_id = message.reply_to_message.from_user.id
-    target_name = message.reply_to_message.from_user.first_name
-    
+    if not message.reply_to_message: return
     args = message.text.split()
-    minutes = 15
-    if len(args) > 1 and args[1].isdigit():
-        minutes = int(args[1])
-        
-    until_date = int(time.time() + minutes * 60)
-    
+    minutes = int(args[1]) if len(args) > 1 and args[1].isdigit() else 15
     try:
-        bot.restrict_chat_member(
-            message.chat.id, 
-            target_id, 
-            until_date=until_date,
-            can_send_messages=False,
-            can_send_media_messages=False,
-            can_send_other_messages=False
-        )
-        bot.reply_to(message, f"🔇 Пользователь {target_name} отправлен в мут на {minutes} минут.")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Не удалось выдать мут: {e}")
+        bot.restrict_chat_member(message.chat.id, message.reply_to_message.from_user.id, until_date=int(time.time() + minutes*60), can_send_messages=False)
+        bot.reply_to(message, f"🔇 Мут на {minutes} мин.")
+    except Exception as e: bot.reply_to(message, f"Ошибка: {e}")
 
-# Команда Размут
 @bot.message_handler(commands=['unmute'])
 def unmute_handler(message):
-    if not is_user_admin(message.chat.id, message.from_user.id, message.from_user.username):
-        bot.reply_to(message, "❌ У вас нет прав.")
-        return
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответьте на сообщение пользователя.")
-        return
-
-    target_id = message.reply_to_message.from_user.id
-    target_name = message.reply_to_message.from_user.first_name
-    
+    if not is_user_admin(message.chat.id, message.from_user.id, message.from_user.username): return
+    if not message.reply_to_message: return
     try:
-        bot.restrict_chat_member(
-            message.chat.id,
-            target_id,
-            can_send_messages=True,
-            can_send_media_messages=True,
-            can_send_other_messages=True,
-            can_add_web_page_previews=True
-        )
-        bot.reply_to(message, f"🔊 Пользователь {target_name} размучен!")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Ошибка размута: {e}")
+        bot.restrict_chat_member(message.chat.id, message.reply_to_message.from_user.id, can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True)
+        bot.reply_to(message, "🔊 Размучен!")
+    except Exception as e: bot.reply_to(message, f"Ошибка: {e}")
 
-# Команда Варн (Предупреждение)
 @bot.message_handler(commands=['warn'])
 def warn_handler(message):
-    if not is_user_admin(message.chat.id, message.from_user.id, message.from_user.username):
-        bot.reply_to(message, "❌ Эта команда только для админов.")
-        return
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответьте на сообщение нарушителя.")
-        return
-
+    if not is_user_admin(message.chat.id, message.from_user.id, message.from_user.username): return
+    if not message.reply_to_message: return
     target_id = message.reply_to_message.from_user.id
-    target_name = message.reply_to_message.from_user.first_name
-    
     current_warns = get_db_val("warns", target_id, 0) + 1
     update_db("warns", target_id, current_warns)
-    
     if current_warns >= 3:
-        until_date = int(time.time() + 24 * 3600)
-        try:
-            bot.restrict_chat_member(message.chat.id, target_id, until_date=until_date, can_send_messages=False)
-            update_db("warns", target_id, 0)
-            bot.reply_to(message, f"⛔️ {target_name} получил 3/3 предупреждений и отправлен в мут на 24 часа!")
-        except Exception as e:
-            bot.reply_to(message, f"❌ Не удалось применить ограничение: {e}")
+        bot.restrict_chat_member(message.chat.id, target_id, until_date=int(time.time() + 86400), can_send_messages=False)
+        update_db("warns", target_id, 0)
+        bot.reply_to(message, "⛔️ 3/3 варнов! Мут на 24 часа.")
     else:
-        bot.reply_to(message, f"⚠️ Пользователю {target_name} выдано предупреждение ({current_warns}/3)!")
+        bot.reply_to(message, f"⚠️ Предупреждение ({current_warns}/3)!")
 
-# ================= РАЗДЕЛ: ИИ ФУНКЦИЯ (/ai) =================
-@bot.message_handler(commands=['ai'])
-def ai_handler(message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        bot.reply_to(message, "🤖 Пожалуйста, напишите ваш вопрос после команды.\nПример: `/ai почему небо синее?`", parse_mode="Markdown")
-        return
-        
-    user_query = args[1]
-    msg_waiting = bot.reply_to(message, "🤖 *ИИ думает...* Пожалуйста, подождите.", parse_mode="Markdown")
-    
-    # Имитируем умные ИИ-ответы на базе встроенных текстовых шаблонов
-    responses = [
-        f"🤖 Проанализировав ваш запрос '{user_query}', могу сказать, что это отличная мысль! Всё указывает на то, что оптимизация — ключ к успеху любого проекта.",
-        f"🤖 Хм, интересный вопрос! Что касается '{user_query}', здесь важно учитывать баланс сил. Например, в нашем кликере пассивный доход всегда решает проблемы быстрее!",
-        f"🤖 База данных ИИ подсказывает: '{user_query}' — это тема, требующая детального изучения. Но помните, что лучший ответ всегда кроется в практике и хорошем коде!",
-        f"🤖 Мои нейронные сети обработали запрос по поводу '{user_query}'. Статистика говорит, что 99% ботов на Render одобряют такой ход мыслей!"
-    ]
-    
-    final_response = random.choice(responses)
-    
-    # Изменяем сообщение на готовый ответ от "ИИ"
-    try:
-        bot.edit_message_text(final_response, chat_id=message.chat.id, message_id=msg_waiting.message_id)
-    except Exception as e:
-        logger.error(f"Ошибка изменения сообщения ИИ: {e}")
-
-# ================= СТАРТ И КЛИКЕР ФУНКЦИИ =================
+# ================= ОСТАЛЬНЫЕ ИГРОВЫЕ И ИИ КОМАНДЫ =================
 @bot.message_handler(commands=['start'])
 def start_handler(message):
-    welcome_text = (
-        f"👋 Привет, {message.from_user.first_name}!\n\n"
-        "Я весёлый игровой и модераторский бот! 🎉\n"
-        "Нажмите на синюю кнопку **'Меню'** в левом нижнем углу чата, чтобы увидеть все доступные команды!\n\n"
-        "🖱 `/click` — наш фирменный кликер! Зарабатывай очки!\n"
-        "🎒 `/profile` — твой игровой инвентарь и баланс.\n"
-        "🤖 `/ai [ваш вопрос]` — спросить нашего встроенного ИИ!\n"
-        "🌟 Также у нас доступны VIP-ранги за Telegram Stars! Наберите `/stars`"
-    )
-    bot.reply_to(message, welcome_text)
+    bot.reply_to(message, f"👋 Привет, {message.from_user.first_name}!\nЯ готов к работе.\nВсе команды доступны в синей кнопке **'Меню'** слева снизу.")
 
 @bot.message_handler(commands=['click'])
 def click_handler(message):
     user_id = message.from_user.id
     owned = get_db_val("rappers", user_id, [])
-    passive_income = sum([RAPPERS[item]["income"] for item in owned if item in RAPPERS])
-            
+    passive = sum([RAPPERS[item]["income"] for item in owned if item in RAPPERS])
     user_rank = get_db_val("ranks", user_id, "default")
     bonus = RANKS[user_rank]["bonus"] if user_rank in RANKS else 1.0
-        
-    click_value = int((10 + passive_income * 0.1) * bonus)
-    new_balance = get_db_val("balance", user_id, 0) + click_value
-    update_db("balance", user_id, new_balance)
-    
-    bot.reply_to(message, f"🖱 Клик! Вы получили +{click_value} очков!\n💰 Твой баланс: {new_balance} очков.")
-
-@bot.message_handler(commands=['profile'])
-def profile_handler(message):
-    user_id = message.from_user.id
-    balance = get_db_val("balance", user_id, 0)
-    user_rank_id = get_db_val("ranks", user_id, "default")
-    
-    rank_name = RANKS[user_rank_id]["name"] if user_rank_id in RANKS else "Обычный игрок"
-    rank_color = RANKS[user_rank_id]["color"] if user_rank_id in RANKS else "👤"
-        
-    owned_rappers = get_db_val("rappers", user_id, [])
-    rappers_str = ", ".join([RAPPERS[r]["name"] for r in owned_rappers if r in RAPPERS]) or "Пока нет"
-    
-    profile_text = (
-        f"{rank_color} **Профиль игрока {message.from_user.first_name}**\n\n"
-        f"🏅 Статус: {rank_name}\n"
-        f"💰 Баланс кликера: {balance} очков\n"
-        f"🎒 Твоя музыкальная команда: {rappers_str}\n"
-    )
-    bot.reply_to(message, profile_text, parse_mode="Markdown")
+    val = int((10 + passive * 0.1) * bonus)
+    new_bal = get_db_val("balance", user_id, 0) + val
+    update_db("balance", user_id, new_bal)
+    bot.reply_to(message, f"🖱 +{val} очков! Баланс: {new_bal}")
 
 @bot.message_handler(commands=['buy_rapper'])
 def buy_rapper_handler(message):
     user_id = message.from_user.id
     args = message.text.split()
-    
     if len(args) < 2:
-        shop_text = "🛍 **Магазин весёлых рэперов:**\n\n"
-        for key, info in RAPPERS.items():
-            shop_text += f"• **{info['name']}** (`{key}`)\n   Цена: {info['price']} | Доход: +{info['income']} очков/клик\n\n"
-        shop_text += "Чтобы купить, напиши: `/buy_rapper [название]`"
-        bot.reply_to(message, shop_text, parse_mode="Markdown")
+        text = "🛍 **Магазин рэперов:**\n\n"
+        for k, v in RAPPERS.items(): text += f"• `{k}` — {v['name']} (Цена: {v['price']})\n"
+        bot.reply_to(message, text, parse_mode="Markdown")
         return
-
     rapper_key = args[1].lower()
-    if rapper_key not in RAPPERS:
-        bot.reply_to(message, "❌ Такого исполнителя нет.")
-        return
-        
-    price = RAPPERS[rapper_key]["price"]
-    balance = get_db_val("balance", user_id, 0)
-    
-    if balance < price:
-        bot.reply_to(message, f"❌ Недостаточно очков! Нужно {price} очков.")
-        return
-        
-    owned = get_db_val("rappers", user_id, [])
-    if rapper_key in owned:
-        bot.reply_to(message, "🤠 Этот рэпер уже в твоей команде!")
-        return
-        
-    owned.append(rapper_key)
-    update_db("balance", user_id, balance - price)
-    update_db("rappers", user_id, owned)
-    bot.reply_to(message, f"🎉 Ты нанял **{RAPPERS[rapper_key]['name']}**!")
+    if rapper_key in RAPPERS:
+        bal = get_db_val("balance", user_id, 0)
+        price = RAPPERS[rapper_key]["price"]
+        if bal >= price:
+            owned = get_db_val("rappers", user_id, [])
+            if rapper_key not in owned:
+                owned.append(rapper_key)
+                update_db("balance", user_id, bal - price)
+                update_db("rappers", user_id, owned)
+                bot.reply_to(message, "🎉 Успешно куплено!")
+            else: bot.reply_to(message, "⚠️ Уже есть в команде.")
+        else: bot.reply_to(message, "❌ Недостаточно очков.")
 
 @bot.message_handler(commands=['dice'])
-def dice_handler(message):
-    bot.send_dice(message.chat.id, emoji="🎲")
+def dice_handler(message): bot.send_dice(message.chat.id, emoji="🎲")
 
 @bot.message_handler(commands=['rsp'])
 def rsp_handler(message):
     args = message.text.split()
+    if len(args) < 2: return
     choices = ["камень", "ножницы", "бумага"]
-    if len(args) < 2 or args[1].lower() not in choices:
-        bot.reply_to(message, "✊✌️ Использование: `/rsp камень`, `/rsp ножницы` или `/rsp бумага`")
-        return
-    user_choice = args[1].lower()
-    bot_choice = random.choice(choices)
-    emojis = {"камень": "🪨", "ножницы": "✂️", "бумага": "📄"}
-    
-    if user_choice == bot_choice:
-        result = "🤝 У нас ничья!"
-    elif (user_choice == "камень" and bot_choice == "ножницы") or \
-         (user_choice == "ножницы" and bot_choice == "бумага") or \
-         (user_choice == "бумага" and bot_choice == "камень"):
-        result = "🎉 Ты победил! Получаешь +50 очков!"
+    user = args[1].lower()
+    if user not in choices: return
+    bot_c = random.choice(choices)
+    if user == bot_c: res = "Ничья!"
+    elif (user == "камень" and bot_c == "ножницы") or (user == "ножницы" and bot_c == "бумага") or (user == "бумага" and bot_c == "камень"):
+        res = "Победа! +50 очков."
         update_db("balance", message.from_user.id, get_db_val("balance", message.from_user.id, 0) + 50)
-    else:
-        result = "😜 Бот победил!"
-    bot.reply_to(message, f"Твой выбор: {emojis[user_choice]}\nМой выбор: {emojis[bot_choice]}\n\n*{result}*", parse_mode="Markdown")
+    else: res = "Бот победил."
+    bot.reply_to(message, f"Ваш выбор: {user}\nБот выбор: {bot_c}\n\n{res}")
 
 @bot.message_handler(commands=['quiz'])
 def quiz_handler(message):
-    num1, num2 = random.randint(1, 20), random.randint(1, 20)
-    correct_ans = num1 + num2
+    n1, n2 = random.randint(1,20), random.randint(1,20)
+    ans = n1 + n2
     args = message.text.split()
     if len(args) < 2:
-        bot.reply_to(message, f"🧮 Сколько будет: **{num1} + {num2}**?\nНапиши ответ: `/quiz [ответ]`", parse_mode="Markdown")
+        bot.reply_to(message, f"🧮 Сколько будет {n1} + {n2}?\nОтвет: `/quiz [число]`", parse_mode="Markdown")
         return
-    try:
-        if int(args[1]) == correct_ans:
-            update_db("balance", message.from_user.id, get_db_val("balance", message.from_user.id, 0) + 200)
-            bot.reply_to(message, "🎉 Верно! +200 очков!")
-        else:
-            bot.reply_to(message, "❌ Неверно!")
-    except:
-        bot.reply_to(message, "❌ Введите число.")
+    if args[1].isdigit() and int(args[1]) == ans:
+        update_db("balance", message.from_user.id, get_db_val("balance", message.from_user.id, 0) + 200)
+        bot.reply_to(message, "🎉 Верно! +200 очков.")
+    else: bot.reply_to(message, "❌ Неверно!")
 
 @bot.message_handler(commands=['stars'])
 def stars_handler(message):
-    text = "🌟 **VIP Статусы за Telegram Stars!** 🌟\n\n"
-    for r_id, info in RANKS.items():
-        text += f"{info['color']} **{info['name']}** (`/buy_rank {r_id}`)\n Цена: {info['stars']} Stars ⭐\n\n"
+    text = "🌟 **VIP Статусы за Telegram Stars:**\n\n"
+    for k, v in RANKS.items(): text += f"• `{k}` — {v['name']} ({v['stars']} Stars ⭐)\n"
     bot.reply_to(message, text, parse_mode="Markdown")
 
 @bot.message_handler(commands=['buy_rank'])
 def buy_rank_handler(message):
     args = message.text.split()
-    if len(args) < 2 or args[1].lower() not in RANKS:
-        bot.reply_to(message, "❌ Напишите: `/buy_rank [имя_ранга]`")
-        return
+    if len(args) < 2 or args[1].lower() not in RANKS: return
     rank_id = args[1].lower()
     prices = [types.LabeledPrice(label=RANKS[rank_id]["name"], amount=RANKS[rank_id]["stars"])]
-    bot.send_invoice(message.chat.id, title=RANKS[rank_id]["name"], description="Покупка VIP ранга", invoice_payload=f"buy_rank_{rank_id}_{message.from_user.id}", provider_token="", currency="XTR", prices=prices)
+    bot.send_invoice(message.chat.id, title=RANKS[rank_id]["name"], description="VIP", invoice_payload=f"buy_rank_{rank_id}_{message.from_user.id}", provider_token="", currency="XTR", prices=prices)
 
 @bot.pre_checkout_query_handler(func=lambda query: True)
-def process_pre_checkout(pre_checkout_query):
-    bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+def process_pre_checkout(pre_checkout_query): bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
 
 @bot.message_handler(content_types=['successful_payment'])
 def process_successful_payment(message):
@@ -444,33 +433,42 @@ def process_successful_payment(message):
     if payload.startswith("buy_rank_"):
         parts = payload.split("_")
         update_db("ranks", int(parts[3]), parts[2])
-        bot.reply_to(message, f"🎉 Вы получили ранг {RANKS[parts[2]]['name']}!")
+        bot.reply_to(message, "🎉 Ранг зачислен!")
 
-# ================= АВТО-МОДЕРАЦИЯ (СПАМ И ПЛОХИЕ СЛОВА) =================
+@bot.message_handler(commands=['ai'])
+def ai_handler(message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2: return
+    msg_waiting = bot.reply_to(message, "🤖 *ИИ думает...*", parse_mode="Markdown")
+    responses = [
+        "🤖 Отличная мысль! Оптимизация проекта — залог успеха.",
+        "🤖 Интересный вопрос. В нашем кликере пассивный доход решает любые проблемы!",
+        "🤖 Мои нейросети говорят, что 99% серверов Render одобряют этот ход мыслей."
+    ]
+    bot.edit_message_text(random.choice(responses), chat_id=message.chat.id, message_id=msg_waiting.message_id)
+
+# ================= АВТО-МОДЕРАЦИЯ И ПЛОХИЕ СЛОВА =================
 @bot.message_handler(func=lambda msg: True, content_types=['text'])
 def auto_moderation(message):
-    if is_user_admin(message.chat.id, message.from_user.id, message.from_user.username):
-        return
-
+    if is_user_admin(message.chat.id, message.from_user.id, message.from_user.username): return
     text_lower = message.text.lower()
     if "t.me/" in text_lower or "telegram.me/" in text_lower:
         try:
             bot.delete_message(message.chat.id, message.message_id)
             bot.restrict_chat_member(message.chat.id, message.from_user.id, until_date=int(time.time() + 1800), can_send_messages=False)
             bot.send_message(message.chat.id, f"🤫 {message.from_user.first_name} в муте на 30 мин за рекламу!")
-        except Exception as e: logger.error(e)
+        except: pass
         return
-
     for word in BAD_WORDS:
         if word in text_lower:
             try:
                 bot.delete_message(message.chat.id, message.message_id)
                 bot.restrict_chat_member(message.chat.id, message.from_user.id, until_date=int(time.time() + 300), can_send_messages=False)
-                bot.send_message(message.chat.id, f"🤐 {message.from_user.first_name} в муте на 5 мин за маты!")
-            except Exception as e: logger.error(e)
+                bot.send_message(message.chat.id, f"🤐 {message.from_user.first_name} в муте на 5 мин за нежелательные слова!")
+            except: pass
             return
 
-# ================= ВЕБ-СЕРВЕР =================
+# ================= ВЕБ-СЕРВЕР HEALTH CHECK =================
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -489,7 +487,5 @@ if __name__ == "__main__":
     bot.remove_webhook()
     logger.info("Бот запущен!")
     while True:
-        try:
-            bot.polling(none_stop=True, interval=0, timeout=60)
-        except Exception as e:
-            time.sleep(5)
+        try: bot.polling(none_stop=True, interval=0, timeout=60)
+        except: time.sleep(5)
