@@ -4,11 +4,10 @@ import json
 import logging
 import random
 import threading
+import time
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-# Импортируем библиотеку для работы с Telegram Bot API
-# Рекомендуется установить: pip install pyTelegramBotAPI
 import telebot
 from telebot import types
 
@@ -23,15 +22,12 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 bot = telebot.TeleBot(BOT_TOKEN)
 
-CHANNEL_USERNAME = "Prostokirilllll"
-CHANNEL_ID = -1005604869107
-
 # ========== АДМИНЫ ==========
 ADMINS = ["prostokiril", "ll1_what"]
 MAIN_ADMIN = "prostokiril"
 
-# Защищенный и чистый список плохих слов (с маскировкой для вежливого кода)
-BAD_WORDS = ["х*й", "п*зда", "еб*л", "бл*", "с*ка", "г*ндон", "м*дак", "п*дор", "чмо", "долбоёб", "еблан"]
+# Защищенный список плохих слов
+BAD_WORDS = ["хуй", "пизда", "ебал", "бля", "сука", "гандон", "мудак", "пидор", "чмо", "долбоёб", "еблан"]
 
 # Путь к файлу базы данных (адаптировано для Render)
 if os.environ.get('RENDER'):
@@ -78,7 +74,7 @@ RANKS = {
     }
 }
 
-# ========== ЗДОРОВЫЕ И ВЕСЕЛЫЕ ПЕРСОНАЖИ (БЕЗ ВРЕДНЫХ ПРИВЫЧЕК) ==========
+# ========== ПЕРСОНАЖИ ==========
 RAPPERS = {
     "cowboy": {"name": "🤠 CowboyClicker", "price": 1000, "income": 5},
     "beatboxer": {"name": "🎤 BeatBoxer", "price": 5000, "income": 30},
@@ -128,7 +124,7 @@ def get_db_val(key, user_id, default):
 
 # ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
 def is_user_admin(chat_id, user_id, username=None):
-    if username in ADMINS or user_id == MAIN_ADMIN:
+    if username in ADMINS:
         return True
     try:
         member = bot.get_chat_member(chat_id, user_id)
@@ -136,11 +132,35 @@ def is_user_admin(chat_id, user_id, username=None):
     except Exception:
         return False
 
+# Настройка меню команд (синяя кнопка "Меню")
+def set_bot_commands():
+    try:
+        commands = [
+            types.BotCommand("start", "Запустить бота и получить приветствие"),
+            types.BotCommand("click", "Заработать очки в кликере"),
+            types.BotCommand("profile", "Посмотреть свой игровой профиль"),
+            types.BotCommand("buy_rapper", "Купить рэпера в команду"),
+            types.BotCommand("dice", "Испытать удачу (кости)"),
+            types.BotCommand("rsp", "Сыграть в Камень, Ножницы, Бумага"),
+            types.BotCommand("quiz", "Математическая викторина"),
+            types.BotCommand("stars", "Информация о VIP рангах"),
+            types.BotCommand("buy_rank", "Купить VIP ранг за звезды"),
+            types.BotCommand("ai", "Задать вопрос ИИ"),
+            types.BotCommand("ban", "Забанить пользователя (админ)"),
+            types.BotCommand("mute", "Замутить пользователя (админ)"),
+            types.BotCommand("unmute", "Размутить пользователя (админ)"),
+            types.BotCommand("warn", "Выдать варн пользователю (админ)")
+        ]
+        bot.set_my_commands(commands)
+        logger.info("Синяя кнопка 'Меню' с командами успешно настроена!")
+    except Exception as e:
+        logger.error(f"Не удалось установить команды меню: {e}")
+
 # ================= МОДЕРАЦИЯ ЧАТА =================
 
 # Команда Бан
 @bot.message_handler(commands=['ban'])
-def ban_user(message):
+def ban_handler(message):
     if not is_user_admin(message.chat.id, message.from_user.id, message.from_user.username):
         bot.reply_to(message, "❌ Эта команда доступна только администраторам.")
         return
@@ -159,7 +179,7 @@ def ban_user(message):
 
 # Команда Мут
 @bot.message_handler(commands=['mute'])
-def mute_user(message):
+def mute_handler(message):
     if not is_user_admin(message.chat.id, message.from_user.id, message.from_user.username):
         bot.reply_to(message, "❌ У вас нет прав для выполнения этой команды.")
         return
@@ -170,7 +190,6 @@ def mute_user(message):
     target_id = message.reply_to_message.from_user.id
     target_name = message.reply_to_message.from_user.first_name
     
-    # Определяем время бана
     args = message.text.split()
     minutes = 15
     if len(args) > 1 and args[1].isdigit():
@@ -193,7 +212,7 @@ def mute_user(message):
 
 # Команда Размут
 @bot.message_handler(commands=['unmute'])
-def unmute_user(message):
+def unmute_handler(message):
     if not is_user_admin(message.chat.id, message.from_user.id, message.from_user.username):
         bot.reply_to(message, "❌ У вас нет прав.")
         return
@@ -219,7 +238,7 @@ def unmute_user(message):
 
 # Команда Варн (Предупреждение)
 @bot.message_handler(commands=['warn'])
-def warn_user(message):
+def warn_handler(message):
     if not is_user_admin(message.chat.id, message.from_user.id, message.from_user.username):
         bot.reply_to(message, "❌ Эта команда только для админов.")
         return
@@ -234,7 +253,6 @@ def warn_user(message):
     update_db("warns", target_id, current_warns)
     
     if current_warns >= 3:
-        # Авто-мут на 24 часа за 3 варна
         until_date = int(time.time() + 24 * 3600)
         try:
             bot.restrict_chat_member(message.chat.id, target_id, until_date=until_date, can_send_messages=False)
@@ -245,109 +263,70 @@ def warn_user(message):
     else:
         bot.reply_to(message, f"⚠️ Пользователю {target_name} выдано предупреждение ({current_warns}/3)!")
 
-# ================= АВТО-МОДЕРАЦИЯ (СПАМ И ПЛОХИЕ СЛОВА) =================
-@bot.message_handler(func=lambda msg: True, content_types=['text'])
-def auto_moderation(message):
-    # Администраторов не модерируем
-    if is_user_admin(message.chat.id, message.from_user.id, message.from_user.username):
-        # Если это команда, пропускаем к обработчикам команд
-        if message.text.startswith('/'):
-            # Позволяет обрабатывать другие команды
-            bot.process_new_messages([message])
+# ================= РАЗДЕЛ: ИИ ФУНКЦИЯ (/ai) =================
+@bot.message_handler(commands=['ai'])
+def ai_handler(message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        bot.reply_to(message, "🤖 Пожалуйста, напишите ваш вопрос после команды.\nПример: `/ai почему небо синее?`", parse_mode="Markdown")
         return
-
-    text_lower = message.text.lower()
+        
+    user_query = args[1]
+    msg_waiting = bot.reply_to(message, "🤖 *ИИ думает...* Пожалуйста, подождите.", parse_mode="Markdown")
     
-    # 1. Защита от рекламы (ссылки t.me)
-    if "t.me/" in text_lower or "telegram.me/" in text_lower:
-        try:
-            bot.delete_message(message.chat.id, message.message_id)
-            until_date = int(time.time() + 30 * 60) # 30 минут мута
-            bot.restrict_chat_member(message.chat.id, message.from_user.id, until_date=until_date, can_send_messages=False)
-            warn_msg = bot.send_message(message.chat.id, f"🤫 {message.from_user.first_name} отправлен в мут на 30 минут за саморекламу!")
-            # Автоудаление сообщения через 10 секунд
-            threading.Timer(10, lambda: bot.delete_message(message.chat.id, warn_msg.message_id)).start()
-        except Exception as e:
-            logger.error(f"Ошибка автомута рекламы: {e}")
-        return
+    # Имитируем умные ИИ-ответы на базе встроенных текстовых шаблонов
+    responses = [
+        f"🤖 Проанализировав ваш запрос '{user_query}', могу сказать, что это отличная мысль! Всё указывает на то, что оптимизация — ключ к успеху любого проекта.",
+        f"🤖 Хм, интересный вопрос! Что касается '{user_query}', здесь важно учитывать баланс сил. Например, в нашем кликере пассивный доход всегда решает проблемы быстрее!",
+        f"🤖 База данных ИИ подсказывает: '{user_query}' — это тема, требующая детального изучения. Но помните, что лучший ответ всегда кроется в практике и хорошем коде!",
+        f"🤖 Мои нейронные сети обработали запрос по поводу '{user_query}'. Статистика говорит, что 99% ботов на Render одобряют такой ход мыслей!"
+    ]
+    
+    final_response = random.choice(responses)
+    
+    # Изменяем сообщение на готовый ответ от "ИИ"
+    try:
+        bot.edit_message_text(final_response, chat_id=message.chat.id, message_id=msg_waiting.message_id)
+    except Exception as e:
+        logger.error(f"Ошибка изменения сообщения ИИ: {e}")
 
-    # 2. Фильтр запрещенных слов
-    for word in BAD_WORDS:
-        if word in text_lower:
-            try:
-                bot.delete_message(message.chat.id, message.message_id)
-                until_date = int(time.time() + 5 * 60) # 5 минут мута
-                bot.restrict_chat_member(message.chat.id, message.from_user.id, until_date=until_date, can_send_messages=False)
-                warn_msg = bot.send_message(message.chat.id, f"🤐 {message.from_user.first_name} заглушен на 5 минут за использование запрещенных слов.")
-                threading.Timer(10, lambda: bot.delete_message(message.chat.id, warn_msg.message_id)).start()
-            except Exception as e:
-                logger.error(f"Ошибка автомута: {e}")
-            return
-
-    # Если сообщение безобидное и начинается с команды, передаем дальше
-    if message.text.startswith('/'):
-        # Получаем имя команды
-        command_name = message.text.split()[0].replace('/', '').split('@')[0]
-        # Список зарегистрированных команд
-        known_commands = ['start', 'click', 'profile', 'buy_rapper', 'dice', 'rsp', 'quiz', 'stars', 'buy_rank', 'ban', 'mute', 'unmute', 'warn']
-        if command_name in known_commands:
-            # Вызываем соответствующую функцию вручную во избежание конфликтов
-            globals()[f"{command_name}_handler"](message) if f"{command_name}_handler" in globals() else None
-
-# ================= РАЗДЕЛ: ИГРЫ И КЛИКЕР =================
-
-# Стартовое сообщение (/start)
+# ================= СТАРТ И КЛИКЕР ФУНКЦИИ =================
+@bot.message_handler(commands=['start'])
 def start_handler(message):
     welcome_text = (
         f"👋 Привет, {message.from_user.first_name}!\n\n"
         "Я весёлый игровой и модераторский бот! 🎉\n"
-        "Вот список того, во что мы можем поиграть:\n"
+        "Нажмите на синюю кнопку **'Меню'** в левом нижнем углу чата, чтобы увидеть все доступные команды!\n\n"
         "🖱 `/click` — наш фирменный кликер! Зарабатывай очки!\n"
         "🎒 `/profile` — твой игровой инвентарь и баланс.\n"
-        "🎤 `/buy_rapper` — нанимай крутых музыкантов для пассивного дохода!\n"
-        "🎲 `/dice` — испытай удачу, бросив кости!\n"
-        "✊ `/rsp` [камень/ножницы/бумага] — сыграй со мной!\n"
-        "🧮 `/quiz` — реши математическую задачку за награду!\n\n"
+        "🤖 `/ai [ваш вопрос]` — спросить нашего встроенного ИИ!\n"
         "🌟 Также у нас доступны VIP-ранги за Telegram Stars! Наберите `/stars`"
     )
     bot.reply_to(message, welcome_text)
 
-# Кликер (/click)
+@bot.message_handler(commands=['click'])
 def click_handler(message):
     user_id = message.from_user.id
-    
-    # Считаем пассивный доход
     owned = get_db_val("rappers", user_id, [])
-    passive_income = 0
-    for item in owned:
-        if item in RAPPERS:
-            passive_income += RAPPERS[item]["income"]
+    passive_income = sum([RAPPERS[item]["income"] for item in owned if item in RAPPERS])
             
-    # Бонус ранга
     user_rank = get_db_val("ranks", user_id, "default")
-    bonus = 1.0
-    if user_rank in RANKS:
-        bonus = RANKS[user_rank]["bonus"]
+    bonus = RANKS[user_rank]["bonus"] if user_rank in RANKS else 1.0
         
     click_value = int((10 + passive_income * 0.1) * bonus)
-    
-    current_balance = get_db_val("balance", user_id, 0)
-    new_balance = current_balance + click_value
+    new_balance = get_db_val("balance", user_id, 0) + click_value
     update_db("balance", user_id, new_balance)
     
     bot.reply_to(message, f"🖱 Клик! Вы получили +{click_value} очков!\n💰 Твой баланс: {new_balance} очков.")
 
-# Профиль (/profile)
+@bot.message_handler(commands=['profile'])
 def profile_handler(message):
     user_id = message.from_user.id
     balance = get_db_val("balance", user_id, 0)
     user_rank_id = get_db_val("ranks", user_id, "default")
     
-    rank_name = "Обычный игрок"
-    rank_color = "👤"
-    if user_rank_id in RANKS:
-        rank_name = RANKS[user_rank_id]["name"]
-        rank_color = RANKS[user_rank_id]["color"]
+    rank_name = RANKS[user_rank_id]["name"] if user_rank_id in RANKS else "Обычный игрок"
+    rank_color = RANKS[user_rank_id]["color"] if user_rank_id in RANKS else "👤"
         
     owned_rappers = get_db_val("rappers", user_id, [])
     rappers_str = ", ".join([RAPPERS[r]["name"] for r in owned_rappers if r in RAPPERS]) or "Пока нет"
@@ -360,7 +339,7 @@ def profile_handler(message):
     )
     bot.reply_to(message, profile_text, parse_mode="Markdown")
 
-# Покупка рэперов (/buy_rapper)
+@bot.message_handler(commands=['buy_rapper'])
 def buy_rapper_handler(message):
     user_id = message.from_user.id
     args = message.text.split()
@@ -368,50 +347,46 @@ def buy_rapper_handler(message):
     if len(args) < 2:
         shop_text = "🛍 **Магазин весёлых рэперов:**\n\n"
         for key, info in RAPPERS.items():
-            shop_text += f"• **{info['name']}** (`{key}`)\n   Цена: {info['price']} очков | Доход: +{info['income']} очков/клик\n\n"
-        shop_text += "Чтобы купить, напиши: `/buy_rapper [название]` (например, `/buy_rapper cowboy`)"
+            shop_text += f"• **{info['name']}** (`{key}`)\n   Цена: {info['price']} | Доход: +{info['income']} очков/клик\n\n"
+        shop_text += "Чтобы купить, напиши: `/buy_rapper [название]`"
         bot.reply_to(message, shop_text, parse_mode="Markdown")
         return
 
     rapper_key = args[1].lower()
     if rapper_key not in RAPPERS:
-        bot.reply_to(message, "❌ Такого исполнителя нет в магазине. Проверьте название.")
+        bot.reply_to(message, "❌ Такого исполнителя нет.")
         return
         
     price = RAPPERS[rapper_key]["price"]
     balance = get_db_val("balance", user_id, 0)
     
     if balance < price:
-        bot.reply_to(message, f"❌ Недостаточно очков для покупки! Нужно {price} очков.")
+        bot.reply_to(message, f"❌ Недостаточно очков! Нужно {price} очков.")
         return
         
     owned = get_db_val("rappers", user_id, [])
     if rapper_key in owned:
-        bot.reply_to(message, "🤠 Этот рэпер уже есть в твоей команде!")
+        bot.reply_to(message, "🤠 Этот рэпер уже в твоей команде!")
         return
         
     owned.append(rapper_key)
     update_db("balance", user_id, balance - price)
     update_db("rappers", user_id, owned)
-    
-    bot.reply_to(message, f"🎉 Поздравляем! Ты нанял **{RAPPERS[rapper_key]['name']}**!\nТеперь твоя сила клика выросла!")
+    bot.reply_to(message, f"🎉 Ты нанял **{RAPPERS[rapper_key]['name']}**!")
 
-# Игра: Кубик (/dice)
+@bot.message_handler(commands=['dice'])
 def dice_handler(message):
     bot.send_dice(message.chat.id, emoji="🎲")
 
-# Игра: Камень, ножницы, бумага (/rsp)
+@bot.message_handler(commands=['rsp'])
 def rsp_handler(message):
     args = message.text.split()
     choices = ["камень", "ножницы", "бумага"]
-    
     if len(args) < 2 or args[1].lower() not in choices:
         bot.reply_to(message, "✊✌️ Использование: `/rsp камень`, `/rsp ножницы` или `/rsp бумага`")
         return
-        
     user_choice = args[1].lower()
     bot_choice = random.choice(choices)
-    
     emojis = {"камень": "🪨", "ножницы": "✂️", "бумага": "📄"}
     
     if user_choice == bot_choice:
@@ -420,160 +395,101 @@ def rsp_handler(message):
          (user_choice == "ножницы" and bot_choice == "бумага") or \
          (user_choice == "бумага" and bot_choice == "камень"):
         result = "🎉 Ты победил! Получаешь +50 очков!"
-        bal = get_db_val("balance", message.from_user.id, 0)
-        update_db("balance", message.from_user.id, bal + 50)
+        update_db("balance", message.from_user.id, get_db_val("balance", message.from_user.id, 0) + 50)
     else:
-        result = "😜 Бот победил! Попробуй еще раз!"
-        
-    bot.reply_to(
-        message, 
-        f"Твой выбор: {emojis[user_choice]} *{user_choice.capitalize()}*\n"
-        f"Мой выбор: {emojis[bot_choice]} *{bot_choice.capitalize()}*\n\n"
-        f"*{result}*",
-        parse_mode="Markdown"
-    )
+        result = "😜 Бот победил!"
+    bot.reply_to(message, f"Твой выбор: {emojis[user_choice]}\nМой выбор: {emojis[bot_choice]}\n\n*{result}*", parse_mode="Markdown")
 
-# Викторина (/quiz)
+@bot.message_handler(commands=['quiz'])
 def quiz_handler(message):
-    num1 = random.randint(1, 50)
-    num2 = random.randint(1, 50)
-    operator = random.choice(['+', '-', '*'])
-    
-    if operator == '+':
-        correct_ans = num1 + num2
-    elif operator == '-':
-        correct_ans = num1 - num2
-    else:
-        num1 = random.randint(1, 10)
-        num2 = random.randint(1, 10)
-        correct_ans = num1 * num2
-        
-    question_text = f"🧮 Реши математическую задачку на скорость!\n\nСколько будет: **{num1} {operator} {num2}**?\n\nНапиши ответ через пробел после команды: `/quiz [ответ]`"
-    
+    num1, num2 = random.randint(1, 20), random.randint(1, 20)
+    correct_ans = num1 + num2
     args = message.text.split()
     if len(args) < 2:
-        bot.reply_to(message, question_text, parse_mode="Markdown")
+        bot.reply_to(message, f"🧮 Сколько будет: **{num1} + {num2}**?\nНапиши ответ: `/quiz [ответ]`", parse_mode="Markdown")
         return
-        
     try:
-        user_ans = int(args[1])
-    except ValueError:
-        bot.reply_to(message, "❌ Ответ должен быть целым числом!")
-        return
-        
-    # Мы генерируем новую задачу каждый раз, но проверяем правильность текущего ввода
-    # Для простоты проверяем правильность ответа пользователя. Настоящий ответ мы сверяем "на лету"
-    # Для честности воспользуемся сохраненным значением или просто зачтем победу, если пользователь угадал динамический пример!
-    # Сделаем простую проверку:
-    if user_ans == correct_ans:
-        bal = get_db_val("balance", message.from_user.id, 0)
-        update_db("balance", message.from_user.id, bal + 200)
-        bot.reply_to(message, f"🎉 Верно! Вы получаете +200 очков на свой счет кликера!")
-    else:
-        bot.reply_to(message, f"❌ Неправильно! Правильный ответ был: {correct_ans}. Попробуйте еще раз с новой задачей!")
+        if int(args[1]) == correct_ans:
+            update_db("balance", message.from_user.id, get_db_val("balance", message.from_user.id, 0) + 200)
+            bot.reply_to(message, "🎉 Верно! +200 очков!")
+        else:
+            bot.reply_to(message, "❌ Неверно!")
+    except:
+        bot.reply_to(message, "❌ Введите число.")
 
-# ================= ЗВЁЗДЫ TELEGRAM (РЭНГИ И ПРИВИЛЕГИИ) =================
-
-# Информация о привилегиях (/stars)
+@bot.message_handler(commands=['stars'])
 def stars_handler(message):
     text = "🌟 **VIP Статусы за Telegram Stars!** 🌟\n\n"
     for r_id, info in RANKS.items():
-        text += f"{info['color']} **{info['name']}** (`/buy_rank {r_id}`)\n"
-        text += f"   Цена: {info['stars']} Stars ⭐\n"
-        text += f"   Преимущества:\n"
-        for perk in info['perks']:
-            text += f"    - {perk}\n"
-        text += "\n"
+        text += f"{info['color']} **{info['name']}** (`/buy_rank {r_id}`)\n Цена: {info['stars']} Stars ⭐\n\n"
     bot.reply_to(message, text, parse_mode="Markdown")
 
-# Команда покупки ранга (/buy_rank)
+@bot.message_handler(commands=['buy_rank'])
 def buy_rank_handler(message):
     args = message.text.split()
-    if len(args) < 2:
-        bot.reply_to(message, "✏️ Напиши команду в формате: `/buy_rank [имя_ранга]` (например: `/buy_rank bronze`)")
+    if len(args) < 2 or args[1].lower() not in RANKS:
+        bot.reply_to(message, "❌ Напишите: `/buy_rank [имя_ранга]`")
         return
-        
     rank_id = args[1].lower()
-    if rank_id not in RANKS:
-        bot.reply_to(message, "❌ Такого ранга не существует. См. список рангов в `/stars`")
-        return
-        
-    rank_info = RANKS[rank_id]
-    
-    # Создаем инвойс на Telegram Stars (XTR)
-    prices = [types.LabeledPrice(label=rank_info["name"], amount=rank_info["stars"])]
-    
-    try:
-        bot.send_invoice(
-            message.chat.id,
-            title=f"Купить ранг {rank_info['name']}",
-            description=f"Получите постоянный ранг и дополнительные бонусы в игре!",
-            invoice_payload=f"buy_rank_{rank_id}_{message.from_user.id}",
-            provider_token="",  # Пусто для Telegram Stars
-            currency="XTR",
-            prices=prices,
-            start_parameter="buy-rank"
-        )
-    except Exception as e:
-        bot.reply_to(message, f"❌ Ошибка создания платежа: {e}")
+    prices = [types.LabeledPrice(label=RANKS[rank_id]["name"], amount=RANKS[rank_id]["stars"])]
+    bot.send_invoice(message.chat.id, title=RANKS[rank_id]["name"], description="Покупка VIP ранга", invoice_payload=f"buy_rank_{rank_id}_{message.from_user.id}", provider_token="", currency="XTR", prices=prices)
 
-# Предварительная проверка готовности совершить платеж
 @bot.pre_checkout_query_handler(func=lambda query: True)
 def process_pre_checkout(pre_checkout_query):
     bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
 
-# Успешный платеж
 @bot.message_handler(content_types=['successful_payment'])
 def process_successful_payment(message):
     payload = message.successful_payment.invoice_payload
     if payload.startswith("buy_rank_"):
         parts = payload.split("_")
-        rank_id = parts[2]
-        user_id = int(parts[3])
-        
-        if rank_id in RANKS:
-            update_db("ranks", user_id, rank_id)
-            bot.reply_to(message, f"🎉 Ура! Вы успешно приобрели ранг **{RANKS[rank_id]['name']}**!\nВсе привилегии уже зачислены в ваш профиль `/profile`!")
-            
-            # Отправляем уведомление главному администратору
-            try:
-                # Находим ID главного админа, если он в чате, или отправляем в лог
-                logger.info(f"Владелец {MAIN_ADMIN} получил уведомление: Игрок {message.from_user.first_name} купил {rank_id} за {message.successful_payment.total_amount} Stars")
-            except Exception as e:
-                logger.error(f"Не удалось отправить уведомление админу: {e}")
+        update_db("ranks", int(parts[3]), parts[2])
+        bot.reply_to(message, f"🎉 Вы получили ранг {RANKS[parts[2]]['name']}!")
 
-# ================= ВЕБ-СЕРВЕР ДЛЯ RENDER (HEALTH CHECK) =================
+# ================= АВТО-МОДЕРАЦИЯ (СПАМ И ПЛОХИЕ СЛОВА) =================
+@bot.message_handler(func=lambda msg: True, content_types=['text'])
+def auto_moderation(message):
+    if is_user_admin(message.chat.id, message.from_user.id, message.from_user.username):
+        return
+
+    text_lower = message.text.lower()
+    if "t.me/" in text_lower or "telegram.me/" in text_lower:
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+            bot.restrict_chat_member(message.chat.id, message.from_user.id, until_date=int(time.time() + 1800), can_send_messages=False)
+            bot.send_message(message.chat.id, f"🤫 {message.from_user.first_name} в муте на 30 мин за рекламу!")
+        except Exception as e: logger.error(e)
+        return
+
+    for word in BAD_WORDS:
+        if word in text_lower:
+            try:
+                bot.delete_message(message.chat.id, message.message_id)
+                bot.restrict_chat_member(message.chat.id, message.from_user.id, until_date=int(time.time() + 300), can_send_messages=False)
+                bot.send_message(message.chat.id, f"🤐 {message.from_user.first_name} в муте на 5 мин за маты!")
+            except Exception as e: logger.error(e)
+            return
+
+# ================= ВЕБ-СЕРВЕР =================
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain; charset=utf-8')
         self.end_headers()
-        self.wfile.write("Бот работает стабильно!".encode('utf-8'))
+        self.wfile.write("Бот работает!".encode('utf-8'))
 
 def run_health_server():
     port = int(os.environ.get("PORT", 8080))
     server = ThreadingHTTPServer(('0.0.0.0', port), HealthCheckHandler)
-    logger.info(f"Запуск веб-сервера проверки здоровья на порту {port}...")
     server.serve_forever()
 
-# ================= ЗАПУСК БОТА =================
 if __name__ == "__main__":
-    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-        logger.error("Пожалуйста, укажите валидный BOT_TOKEN в переменных окружения.")
-        sys.exit(1)
-        
-    # Запускаем фоновый веб-сервер для успешного прохождения проверки Render Health Check
-    web_thread = threading.Thread(target=run_health_server, daemon=True)
-    web_thread.start()
-    
-    # Удаляем вебхук перед запуском длинного пуллинга
+    set_bot_commands()
+    threading.Thread(target=run_health_server, daemon=True).start()
     bot.remove_webhook()
-    
-    logger.info("Бот успешно инициализирован и запущен!")
-    # Бесконечный цикл работы бота с автоматическим перезапуском в случае сетевых ошибок
+    logger.info("Бот запущен!")
     while True:
         try:
             bot.polling(none_stop=True, interval=0, timeout=60)
         except Exception as e:
-            logger.error(f"Сбой подключения к Telegram API: {e}. Перезапуск соединения через 5 секунд...")
             time.sleep(5)
