@@ -6,8 +6,9 @@ import random
 import threading
 import time
 from datetime import datetime, timedelta
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import asyncio
+from aiohttp import web
 import telebot
 from telebot import types
 
@@ -1232,22 +1233,36 @@ def auto_moderation(message):
             except: pass
             return
 
-# ================= ВЕБ-СЕРВЕР HEALTH CHECK =================
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/plain; charset=utf-8')
-        self.end_headers()
-        self.wfile.write("Бот работает!".encode('utf-8'))
+# ================= ВЕБ-СЕРВЕР HEALTH CHECK (AIOHTTP) =================
+async def handle(request):
+    return web.Response(text="Бот работает!", content_type="text/plain", charset="utf-8")
 
-def run_health_server():
+def run_aiohttp_server():
     port = int(os.environ.get("PORT", 8080))
-    server = ThreadingHTTPServer(('0.0.0.0', port), HealthCheckHandler)
-    server.serve_forever()
+    
+    # Создаем и устанавливаем Event Loop специально для этого фонового потока
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    app = web.Application()
+    app.router.add_get('/', handle)
+    
+    # Настраиваем и запускаем TCPSite
+    runner = web.AppRunner(app)
+    loop.run_until_complete(runner.setup())
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    
+    logger.info(f"Веб-сервер aiohttp запущен на порту {port}")
+    loop.run_until_complete(site.start())
+    loop.run_forever()
 
+# ================= ЗАПУСК БОТА =================
 if __name__ == "__main__":
     set_bot_commands()
-    threading.Thread(target=run_health_server, daemon=True).start()
+    
+    # Запускаем асинхронный сервер aiohttp в отдельном daemon-потоке
+    threading.Thread(target=run_aiohttp_server, daemon=True).start()
+    
     bot.remove_webhook()
     logger.info("Бот запущен!")
     
